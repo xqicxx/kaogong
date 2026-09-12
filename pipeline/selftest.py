@@ -194,12 +194,19 @@ def _siblings():
 def _dedup_edges():
     """页码是硬证据；短文本不该拿相似度说事。"""
     from pipeline import dedup
-    page_two = "第2页 " + "甲" * 40
-    page_three = "第3页 " + "甲" * 40
-    assert not dedup.is_same_page(page_two, page_three),         "页码明确不同（且文字没到几乎一样）时不能判为同一页"
 
+    # 共用一大段版式文字、但页脚页码不同的两页 —— 相似度中等（0.45-0.85 之间）
+    shared = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事为什么会发生的"
+              "真正原因所在。做题时先看题干的分组方式，再看选项有没有回到同一组里作比较。")
+    first = "第2页 " + shared + "本页讲对比实验归因，以分组对照实验为载体推导差异产生的原因。"
+    second = "第3页 " + shared + "本页讲时间对比归因，以过去和现在两个时间维度对照状态变化。"
+    score = dedup.similarity(first, second)
+    assert 0.45 <= score < dedup.STRONG_THRESHOLD,         "这条用例要覆盖“页码否决”的那一段，当前相似度 %.3f 不在区间内" % score
+    assert not dedup.is_same_page(first, second),         "页码明确不同且文字只是中等相似（%.3f）时不能判为同一页" % score
+
+    # 页码被 OCR 读错、但文字几乎一致 → 仍应判为同一页
     long_same = "第2页 " + "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。" * 3
-    assert dedup.is_same_page(long_same, long_same.replace("第2页", "第！页")),         "页码被 OCR 读错、但文字几乎一致，仍应判为同一页"
+    assert dedup.is_same_page(long_same, long_same.replace("第2页", "第！页")),         "页码读错但文字几乎一致，仍应判为同一页"
 
     short = [{"body": "完全不同的内容 A"}, {"body": "完全不同的内容 B"}]
     _kept, deferred = dedup.split_siblings(short, lambda c: c["body"])
