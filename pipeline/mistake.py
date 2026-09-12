@@ -14,11 +14,16 @@
   任何一关失败 → 退一级（不清零，FSRS 那边会自己缩短间隔）
 """
 import argparse
-import math
+import os
 import re
 import subprocess
+import sys
 from datetime import date, timedelta
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline import vault  # type: ignore[import]  # noqa: E402
+# front-matter 读写统一走 vault：之前这份自带一份实现，会把文件里有、update 里没有的键删掉
 
 VAULT = Path.home() / "Documents" / "Obsidian Vault" / "考公"
 CARD_DIR = VAULT / "考点"
@@ -34,47 +39,21 @@ CONFIDENCE = {"高", "中", "低"}
 MASTER_STEPS = ["未掌握", "变式中", "迁移中", "待保持", "已掌握"]
 
 
-def read_card(path):
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---"):
-        return {}, text, ""
-    end = text.find("\n---", 3)
-    fm = {}
-    for line in text[3:end].splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            fm[k.strip()] = v.strip()
-    return fm, text[end + 4:].lstrip("\n"), text[3:end]
+read_card = vault.read
 
 
 def write_card(path, fm, body, raw_fm):
-    """按原顺序重写 front-matter（新字段追加到末尾）。"""
-    keys = list(fm.keys())
-    for line in raw_fm.splitlines():
-        k = line.split(":", 1)[0].strip() if ":" in line else None
-        if k and k not in keys:
-            keys.append(k)
-    rows = []
-    for k in keys:
-        if k in fm:
-            rows.append("%s: %s" % (k, fm[k]))
-    path.write_text("---\n" + "\n".join(rows) + "\n---\n\n" + body, encoding="utf-8")
+    return vault.write(path, fm, body, raw_fm)
 
 
 def safe_int(v, default=0):
     """卡片字段可能被手改坏，解析失败就退回默认值，别让整条流程挂掉。"""
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return default
+    return vault.safe_int(v, default)
 
 
 def safe_float(v, default=12.0):
-    try:
-        f = float(v)
-        return f if math.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
+    f = vault.safe_float(v, default)
+    return f if -1e9 < f < 1e9 else default
 
 
 def norm_state(v):
@@ -88,7 +67,6 @@ def advance(state, kind, ok, today=None, stability=12.0):
     st = dict(state)
     st["变式连胜"] = safe_int(st.get("变式连胜"), 0)
     st["迁移通过"] = str(st.get("迁移通过", "false")).lower() == "true"
-    cur = norm_state(st.get("状态"))
     if kind == "变式":
         if ok:
             st["变式连胜"] += 1
@@ -99,7 +77,7 @@ def advance(state, kind, ok, today=None, stability=12.0):
                 st["状态"] = "变式中"
         else:
             st["变式连胜"] = 0
-            st["状态"] = "变式中" if cur != "未掌握" else "变式中"
+            st["状态"] = "变式中"
     elif kind == "迁移":
         if ok:
             st["迁移通过"] = True

@@ -20,9 +20,15 @@
 import argparse
 import json
 import math
-import re
 import sys
 import urllib.request
+
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline import vault  # type: ignore[import]  # noqa: E402
+# 上面这行 pyright 解析不了：LSP 的工作区根不在仓库根，运行期靠上面的 sys.path 插入了。
+# 同目录的 front-matter 读写，review/mistake 共用。
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -101,14 +107,13 @@ def parse_card(path):
 
 
 def write_card(path, fm, body, raw_fm):
-    lines = []
-    for k, v in fm.items():
-        old = re.search(r"^%s:\s*(.*)$" % re.escape(k), raw_fm, re.M)
-        keep = old.group(0) if old else "%s: %s" % (k, v)
-        if old and k in KEYS.values() and str(v) != old.group(1).strip():
-            keep = "%s: %s" % (k, v)
-        lines.append(keep)
-    path.write_text("---\n" + "\n".join(lines) + "\n---\n\n" + body, encoding="utf-8")
+    """改 front-matter 里的指定字段，其余行原样保留。
+
+    旧实现有个真跑出来的 bug：只有 KEYS 里的字段会被改写，其它字段（状态/变式连胜…）
+    即使用新值传进来也保持原样 —— reset 命令因此静默失效过（另有他因 一直停在「待保持」）。
+    现在统一走 vault.rewrite_front_matter。
+    """
+    return vault.write(path, fm, body, raw_fm)
 
 
 def read_state(fm):
@@ -163,10 +168,14 @@ def due_cards(today=None):
 def cmd_due(args):
     d = due_cards()
     print("  到期 %d 张：" % len(d))
+    today = date.today()
     for c in d[: args.limit]:
         st = c["state"]
-        print("    %-24s 逾期 %s 天  R=%.2f" % (
-            c["path"].stem, (date.today() - st["due"]).days, r_of(max(0, (date.today() - st["last"]).days), st["s"])))
+        # 「已排期但从未复习过」的卡片 last 是空的（init 之后就是这个状态），
+        # 直接相减会 TypeError —— 到期那天必然崩，所以这里必须兜底
+        elapsed = max(0, (today - (st["last"] or today)).days)
+        print("    %-24s 到期 %s（逾期 %s 天）  R=%.2f" % (
+            c["path"].stem, st["due"], (today - st["due"]).days, r_of(elapsed, st["s"])))
 
 
 def build_message(limit):
@@ -178,9 +187,6 @@ def build_message(limit):
         if not st or st["reps"] == 0:
             newt.append(c)
         elif st["due"] <= today:
-            review.append(c)
-    for c in all_cards():
-        if c["state"] and c["state"]["reps"] > 0 and c["state"]["due"] <= today and c not in review:
             review.append(c)
     review.sort(key=lambda c: c["state"]["due"])
 
@@ -281,6 +287,24 @@ def cmd_grade(args):
               "（FSRS-4.5 的 R(0)=1，增量因子为 0），间隔不会因此拉长")
 
 
+def cmd_reset(args):
+    """把所有卡片的状态清回出厂值。会丢复习历史，所以要 --yes。"""
+    if not args.yes:
+        raise SystemExit("这会清掉全部复习历史。确认就加 --yes")
+    cleared = {"状态": "未掌握", "变式连胜": "0", "迁移通过": "false", "保持测试": ""}
+    n = 0
+    for c in all_cards():
+        st = schedule(None, 3)                 # 重新起一张新卡
+        fm, raw, body = c["fm"], c["raw"], c["body"]
+        fm.update(cleared)
+        fm[KEYS["s"]], fm[KEYS["d"]] = st["s"], st["d"]
+        fm[KEYS["reps"]], fm[KEYS["last"]] = 0, ""
+        fm[KEYS["due"]] = str(st["due"])
+        write_card(c["path"], fm, body, raw)
+        n += 1
+    print("  已重置 %d 张卡（状态/排期/掌握字段回到出厂，首轮 %.0f 天）" % (n, FIRST_INTERVAL_DAYS))
+
+
 def cmd_stats(args):
     cards = all_cards()
     today = date.today()
@@ -333,6 +357,8 @@ def main():
     p.set_defaults(fn=cmd_grade)
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)
     p = sub.add_parser("selftest"); p.set_defaults(fn=cmd_selftest)
+    p = sub.add_parser("reset"); p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_reset)
     args = ap.parse_args()
     args.fn(args)
 

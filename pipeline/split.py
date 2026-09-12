@@ -10,9 +10,17 @@
 剩下的必须人工/模型过一遍（这是设计的一部分，不是缺陷）。
 """
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline import vault  # type: ignore[import]  # noqa: E402
+
+# 卡片上属于“复习历史”的字段：重新切卡片时绝不能被覆盖
+PRESERVE = ("到期", "稳定度", "难度", "复习次数", "上次复习",
+            "状态", "变式连胜", "迁移通过", "保持测试")
 
 ROOT = Path.home() / "Documents" / "Obsidian Vault" / "考公"
 
@@ -91,6 +99,8 @@ def main():
     ap.add_argument("--lecture", required=True, help="讲义名，如 逻辑论证-归因论证")
     ap.add_argument("--source", default="")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="覆盖已存在的卡片（只换正文，保留排期与掌握状态）")
     args = ap.parse_args()
 
     subject, _, mod = args.module.partition("/")
@@ -174,10 +184,31 @@ def main():
     skel_path.write_text("\n".join(skel), encoding="utf-8")
     card_dir = ROOT / "考点"
     card_dir.mkdir(parents=True, exist_ok=True)
+    written, skipped, kept = 0, [], 0
     for name, text in cards:
-        (card_dir / name).write_text(text, encoding="utf-8")
+        p = card_dir / name
+        if p.exists() and not args.force:
+            # 卡片已经存在 → 不动它。里面可能已经有复习历史，
+            # 重切一次就把它清零是数据损失（这条是 code review 抓出来的）。
+            skipped.append(name)
+            continue
+        if p.exists():
+            old_fm, _, old_raw = vault.read(p)
+            keep = {k: v for k, v in old_fm.items() if k in PRESERVE}
+            if keep:
+                fm, body, raw = vault.split(text)
+                vault.write(p, keep, body, raw)   # 只换正文，复习历史留着
+                kept += len(keep)
+                written += 1
+                continue
+        p.write_text(text, encoding="utf-8")
+        written += 1
     print("  骨架 %s  （%d 页）" % (skel_path.relative_to(ROOT), len(pages)))
-    print("  卡片 %d 张 → %s" % (len(cards), card_dir.relative_to(ROOT)))
+    print("  卡片 新写 %d 张 / 跳过已存在 %d 张 → %s" % (written, len(skipped), card_dir.relative_to(ROOT)))
+    if kept:
+        print("    其中 %d 个复习历史字段被保留（--force 只换正文，不清排期）" % kept)
+    if skipped and not args.force:
+        print("    想覆盖已有卡片加 --force（仍会保留复习历史）")
 
 
 if __name__ == "__main__":
