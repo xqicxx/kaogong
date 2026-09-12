@@ -485,20 +485,3 @@ vault   front-matter/快照    review / mistake / split 三个命令行
 **一句话**：拍完发我 → 0.7 秒出 markdown → 我对着原图校准 → 进 Obsidian。
 复习：FSRS + 考试日反推首轮 12 天 + 每天早上 08:00 推 + 语义相近的考点错开排。
 错题按**错因**分流；掌握用**变式 + 迁移 + 保持**三关验证。
-
-### 6.3 代码结构（第四轮 review 后重构）
-
-原来的问题：review.py 一个文件同时管排期算法、卡片读写、Telegram 传输、命令行；
-vault 与状态路径硬编码在四个文件里；库函数直接 SystemExit。
-
-```text
-paths   路径唯一来源（环境变量可覆盖，测试能跑在临时库上）
-errors  领域异常，只在 main() 翻成退出码
-fsrs    排期（纯函数，无 I/O）        mastery  掌握三关（纯函数，无 I/O）
-cards   卡片读写与查找               notify   Telegram 传输
-vault   front-matter / 原子写 / 快照
-review · mistake · split             三个命令行，只做拼装
-```
-
-好处：路径改一处；算法能单独断言；换推送通道不用碰排期逻辑。
-
