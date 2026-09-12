@@ -54,5 +54,5 @@ for f in "${ARGS[@]}"; do
 done
 echo "  源: $SOURCE   模块: $MODULE   共 ${#ARGS[@]} 张"
 echo "  矫正 ${t_rect}ms  OCR ${t_ocr}ms  （均摊 $(( (t_rect + t_ocr) / ${#ARGS[@]} ))ms/张）"
-python3 "$HOME/.pi/scripts/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" "${JSONS[@]}"
+python3 "$BIN/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" "${JSONS[@]}"
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
