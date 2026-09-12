@@ -54,7 +54,7 @@
 # --module 省略则落到 考公/_inbox/；非法模块直接报错并列出可选值
 ```
 
-目录约定见 **1.10**。
+目录约定见 **1.11**。
 
 **为什么必须有 ⑤：** 实测每页会残留 3–5 个错字（详细见 1.7），法律条文那种“错一个字换答案”的材料不能信机器。
 校准成本很低——**机器负责把字从图里搬出来，人（我）负责对图**。
@@ -123,21 +123,35 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
 5. 红笔随便标注 —— 去红笔已内置
 ```
 
-### 1.9 工具清单（全部在家目录，重启不丢）
+### 1.9 工具清单（源码在仓库，二进制装到 ~/.pi/bin）
 
 ```text
-~/.pi/bin/rectify       自动找四角 + 透视矫正
-~/.pi/bin/deink         去红笔（可选 --flatten 匀光，实测有害，别开）
-~/.pi/bin/vision-ocr    OCR（--json 带坐标置信度，--plain 关语言纠正）
-~/.pi/bin/crop          裁切 + 放大（校准用）
-~/.pi/scripts/vision2md.py        版面推断 → markdown
-~/.pi/scripts/kaogong-ocr.sh      一条命令串起来
-~/.pi/scripts/*.swift             上述工具源码
+仓库 ~/code/kaogong/                  https://github.com/xqicxx/kaogong
+  tools/*.swift       rectify / deink / vision-ocr / crop 源码
+  tools/install.sh    编译并装到 ~/.pi/bin（零第三方依赖）
+  pipeline/split.py   页 md → 骨架笔记 + 考点卡片
+  pipeline/review.py  FSRS 排期 + Telegram 推送
+  skills/             两个 skill 的副本（装到 ~/.pi/agent/skills/）
+
+运行时
+  ~/.pi/bin/rectify          自动找四角 + 透视矫正
+  ~/.pi/bin/deink            去红笔（--flatten 匀光实测有害，别开）
+  ~/.pi/bin/vision-ocr       OCR（--json 带坐标置信度，--plain 关语言纠正）
+  ~/.pi/bin/crop             裁切 + 放大（校准用）
+  ~/.pi/bin/vision2md.py     版面推断 → markdown
+  ~/.pi/bin/kaogong-ocr.sh   一条命令串起来
+```
+
+### 1.10 已流程化成 skill
+
+```text
+~/.pi/agent/skills/kaogong-ingest/  ①拍照 → 校准 → 落库 → 切卡片（四条硬规则、错误源排序）
+~/.pi/agent/skills/kaogong-review/  ②排期 → 推送 → 评分语义 → 三条证据（逾期优先/语义错开/题型交错）
 ```
 
 ---
 
-### 1.10 Obsidian 目录结构（已建好）
+### 1.11 Obsidian 目录结构（已建好）
 
 ```text
 考公/
@@ -396,26 +410,40 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
 第 0 步  Vision 工具链 + 一条命令跑通              ✅ 完成
 第 1 步  真实照片跑通 + 校准环节定型               ✅ 完成
 第 2 步  Obsidian 目录结构（行测五大模块/申论五大题型） ✅ 完成
-第 3 步  考点卡片落地（折中两层的下半层）          ← 现在这里
-         从已校准的 md 里按考点切卡片 + 绑回小节双链
-第 4 步  FSRS 调度 + 每天早上 08:00 Telegram 推送
-         初始间隔 8–17 天（按 2026-12 上旬考试反推）
-第 5 步  错题本模板 + 语义关联检索（qmd notes collection）
+第 3 步  考点卡片落地（折中两层）                  ✅ 完成（18 张样张）
+第 4 步  FSRS 排期 + 每天早上 08:00 Telegram 推送   ✅ 完成
+第 5 步  错题本模板 + 语义关联检索                 ← 下一步
 第 6 步  掌握验证闭环（变式 / 迁移 / 保持三关）
 ```
 
-**节奏参考（83 天窗口）：**
+**已建好的仓库**：<https://github.com/xqicxx/kaogong>
+
+**两个 skill 已装**：`kaogong-ingest`（拍照→校准→落库→切卡）· `kaogong-review`（排期→推送→评分回写）
+
+## 6. 排期实现细节（第 4 步）
 
 ```text
-第 1 轮  现在 – 09-30   把手上讲义全转完 + 建考点卡
-第 2 轮  10-01 – 10-20  首轮复习铺开（间隔 12 天）
-第 3 轮  10-21 – 11-10  叠加错题本 + 变式训练
-第 4 轮  11-11 – 11-30  交错套卷 + 薄弱点集中
-第 5 轮  12-01 – 12-05  只看“掌握”状态异常的考点
+算法    FSRS-4.5 核心公式（17 参数，完全公开稳定）
+        没上 FSRS-6：6 版多的 w17-w20 主要改「同日复习」与「可训练衰减」，
+        日频复习场景用不到，而我没拿到足够公式细节 —— 宁可用确定的 4.5
+        升级路径：换 W 表 + 两处公式
+
+状态    就写在卡片自己的 front-matter 里，不另建数据库：
+          到期: 2026-09-25   稳定度: 12.0   难度: 5.16
+          复习次数: 0        上次复习:
+        Obsidian 里看得见、Dataview 查得到、vault 的 git 记得住历史
+
+考试锚点 首轮间隔 = 12 天（83 天窗口 × 10-20%），把 w0-w2 按比例缩放到这个值
+         实测：首轮 12 天 / 忘了 1 天 / 勉强 18 天 / 对 41 天 / 太简单 107 天
+
+自检    review.py selftest —— 断言首轮间隔、评分单调性、R 随时间下降、
+        R(S,S)=90% 的定义、难度夹在 [1,10]、复习次数累加
+
+定时    ~/Library/LaunchAgents/com.kaogong.review.plist（每天 08:00）
 ```
 
 ---
 
 **一句话**：拍完发我 → 0.7 秒出 markdown → 我对着原图校准 → 进 Obsidian。
-复习：FSRS-6 + 考试日反推初始间隔（8–17 天）+ 每天早上 08:00 推 + 语义相近的考点错开排。
+复习：FSRS + 考试日反推首轮 12 天 + 每天早上 08:00 推 + 语义相近的考点错开排。
 错题按**错因**分流；掌握用**变式 + 迁移 + 保持**三关验证。

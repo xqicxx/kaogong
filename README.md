@@ -56,9 +56,37 @@ pipeline/split.py --module 行测/判断推理 --lecture 逻辑论证-归因论�
 ## 状态
 
 - [x] 拍照 → markdown 工具链（实测 0.7s/张）
-- [x] 目录结构 + 考点卡片切分
-- [ ] FSRS-6 调度 + 每天早上 08:00 Telegram 推送
+- [x] 目录结构 + 考点卡片切分（骨架 + 卡片两层）
+- [x] FSRS 排期 + 每天早上 08:00 Telegram 推送
 - [ ] 错题本模板 + 语义关联
 - [ ] 掌握验证闭环（变式 / 迁移 / 保持三关）
 
-目标：2026 年 12 月上旬 · 四川省考（2027 年度）
+目标：2026 年 12 月上旬 · 四川省考（2027 年度）· 首轮复习间隔 12 天
+
+## Skill
+
+两个流程已装成 pi skill：
+
+- `kaogong-ingest`　拍照 → 矫正/去红 → OCR → **对着原图校准** → 落库 → 切卡片
+- `kaogong-review`　每日到期推送 → 评分回写 → 进度查询
+
+## 排期
+
+状态写在卡片自己的 front-matter 里（不另建数据库）：
+
+```yaml
+到期: 2026-09-25
+稳定度: 12.0
+难度: 5.16
+复习次数: 0
+上次复习:
+```
+
+```bash
+pipeline/review.py push            # 发今天清单
+pipeline/review.py push --dry      # 只看不发
+pipeline/review.py grade <卡> <1-4>
+pipeline/review.py selftest        # 排期逻辑自检
+```
+
+评分：1 忘了 / 2 勉强 / 3 对了 / 4 太简单。**2 不算“回忆正确”**（successive relearning）。
