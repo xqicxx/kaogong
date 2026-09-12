@@ -99,6 +99,11 @@ def is_noise(line, noise):
         letters = [c for c in t if c.isalpha()]
         if letters and all(c.isascii() and c.isupper() for c in letters):
             return True
+    # 单页处理时批内重复检测帮不上忙，页眉里的品牌/公众号行只能按样式丢
+    if line["y"] < 0.09 and ("公众号" in t or "微信" in t or t.startswith("关注")):
+        return True
+    if line["y"] < 0.08 and len(t) <= 8 and not PAGE_NUM.match(t):
+        return True          # 页眉带里的短品牌名（如「四海公章」）
     return False
 
 
