@@ -62,6 +62,26 @@ vision2md.py 与 kaogong-ocr.sh 现在是软链（改了立即生效），
 考公/_raw/<模块>/              机器原始产出（未校对），永不删
 ```
 
+## 数据安全与回滚
+
+流水线会写你的笔记，所以：
+
+- **写前留快照**：每次改写前把原文件存到 `~/.pi/kaogong/backup/<日期>/`（保留 14 天）
+  回滚：`cp ~/.pi/kaogong/backup/2026-09-13/另有他因.md "$HOME/Documents/Obsidian Vault/考公/考点/"`
+- **原子写**：先写临时文件再 `os.replace`，中途崩不会留下半个笔记
+- **权限保留**：不会把 644 的笔记改成 600
+- **原始件永不删**：`_raw/` 留着机器产出，分得清是识别错还是校错
+
+推荐把 vault 也纳入版本控制（obsidian-git 插件已装，配一下 remote 即可）。
+
+## 卸载
+
+    launchctl unload ~/Library/LaunchAgents/com.kaogong.review.plist
+    rm ~/Library/LaunchAgents/com.kaogong.review.plist
+    rm -rf ~/.pi/bin/{rectify,deink,vision-ocr,crop,vision2md.py,kaogong-ocr.sh} ~/.pi/kaogong
+
+笔记本身在 vault 里，不会被卸掉。
+
 ## 状态
 
 - [x] 拍照 → markdown 工具链（实测 0.7s/张）
