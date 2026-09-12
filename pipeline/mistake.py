@@ -61,13 +61,29 @@ def norm_state(v):
     return v if v in MASTER_STEPS else "未掌握"
 
 
+# 每关要求的前置状态。没有这道闸门，"未掌握"可以直接跳到"已掌握"，
+# 三关就白设计了（open-code-review 指出的问题）。
+GATE = {
+    "变式": ("未掌握", "变式中", "迁移中", "待保持", "已掌握"),
+    "迁移": ("变式中", "迁移中"),      # 必须先过变式关（连续 2 次正确）
+    "保持": ("待保持",),                # 必须先过迁移关
+}
+
+
 def advance(state, kind, ok, today=None, stability=12.0):
     """掌握状态机。state 为 dict：{状态, 变式连胜, 迁移通过, 保持测试}"""
     today = today or date.today()
     st = dict(state)
     st["变式连胜"] = safe_int(st.get("变式连胜"), 0)
     st["迁移通过"] = str(st.get("迁移通过", "false")).lower() == "true"
+    st["保持测试"] = st.get("保持测试") or ""      # 别把 None 写进卡片
+    cur = norm_state(st.get("状态"))
+    if cur not in GATE[kind]:
+        raise ValueError(
+            "%s 关要求当前状态是 %s，但这张卡是「%s」—— 得先过前面的关"
+            % (kind, "/".join(GATE[kind]), cur))
     if kind == "变式":
+        st["保持测试"] = ""          # 回到变式关，说明还没到保持阶段
         if ok:
             st["变式连胜"] += 1
             if st["变式连胜"] >= 2:
@@ -78,11 +94,14 @@ def advance(state, kind, ok, today=None, stability=12.0):
         else:
             st["变式连胜"] = 0
             st["状态"] = "变式中"
+            st["迁移通过"] = False   # 变式又错了，之前"迁移通过"的历史标记要清掉
     elif kind == "迁移":
         if ok:
             st["迁移通过"] = True
             st["状态"] = "待保持"
-            days = max(1, safe_int(round(safe_float(stability)), 12))
+            # 稳定度可能是被手改坏的大数，先夹到合理区间再算日期，否则 timedelta 溢出
+            stab = min(max(safe_float(stability, 12.0), 0.1), 36500.0)
+            days = max(1, safe_int(round(stab), 12))
             st["保持测试"] = str(today + timedelta(days=days))
         else:
             st["迁移通过"] = False
@@ -170,9 +189,12 @@ def cmd_verify(args):
     fm, body, raw = read_card(p)
     stability = safe_float(fm.get("稳定度"), 12.0)
     before = norm_state(fm.get("状态"))
-    st = advance({"状态": fm.get("状态"), "变式连胜": fm.get("变式连胜"),
-                  "迁移通过": fm.get("迁移通过"), "保持测试": fm.get("保持测试")},
-                 args.kind, args.result == "对", stability=stability)
+    try:
+        st = advance({"状态": fm.get("状态"), "变式连胜": fm.get("变式连胜"),
+                      "迁移通过": fm.get("迁移通过"), "保持测试": fm.get("保持测试")},
+                     args.kind, args.result == "对", stability=stability)
+    except ValueError as exc:
+        raise SystemExit("  ✗ %s" % exc)
     fm.update({"状态": st["状态"], "变式连胜": st["变式连胜"],
                "迁移通过": st["迁移通过"], "保持测试": st["保持测试"]})
     write_card(p, fm, body, raw)
@@ -196,8 +218,12 @@ def cmd_queue(args):
     for s, name, keep, mod in rows:
         extra = ""
         if s == "待保持" and keep:
-            d = (date.fromisoformat(keep) - today).days
-            extra = "  保持测试 %s（%s）" % (keep, "%d 天后" % d if d > 0 else "已到期")
+            try:
+                d = (date.fromisoformat(keep) - today).days
+                extra = "  保持测试 %s（%s）" % (keep, "%d 天后" % d if d > 0 else "已到期")
+            except (ValueError, TypeError):
+                # 日期被手改坏时，整张列表不该跟着挂掉
+                extra = "  保持测试日期无法解析：%r（手改过？）" % keep
         print("  [%s] %-22s %s%s" % (s, name, mod, extra))
 
 
@@ -244,6 +270,13 @@ def cmd_selftest(args):
     assert s["状态"] == "迁移中", "连续 2 次变式正确必须进迁移关：%s" % s
     s = advance(s, "变式", False, today)
     assert s["状态"] == "变式中" and s["变式连胜"] == 0, "变式失败要清零并退一级：%s" % s
+    # 闸门：没过变式关不能直接跳迁移/保持
+    for kind in ("迁移", "保持"):
+        try:
+            advance({"状态": "未掌握"}, kind, True, today)
+            raise AssertionError("未掌握状态竟然能直接过 %s 关" % kind)
+        except ValueError:
+            pass
     s = advance(s, "变式", True, today); s = advance(s, "变式", True, today)
     s = advance(s, "迁移", True, today, stability=20)
     assert s["状态"] == "待保持" and s["保持测试"] == str(today + timedelta(days=20)), s

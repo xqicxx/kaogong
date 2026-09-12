@@ -1,20 +1,44 @@
 #!/bin/bash
 # 编译 Swift 工具 + 安装脚本到 ~/.pi/bin
 #   ./install.sh [目标目录]
+#
+# 原来这里会把 swiftc 的报错丢掉、编译失败也 exit 0、冒烟测试只 echo 不跑 ——
+# 现在：旧产物先删、错误照实打印、失败计数、真跑一次冒烟。
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(cd "$(dirname "$0")" && pwd -P)"     # 认符号链接，也扛得住路径里的空格
 BIN="${1:-$HOME/.pi/bin}"
 mkdir -p "$BIN"
 
-for s in rectify vision-ocr deink crop; do
-  if swiftc -O "$s.swift" -o "$BIN/$s" 2>/dev/null; then
-    echo "  ✓ $s"
+failed=0
+for tool in rectify vision-ocr deink crop; do
+  rm -f "$BIN/$tool"                        # 失败时别留着旧二进制冒充新版本
+  if swiftc -O "$tool.swift" -o "$BIN/$tool"; then
+    echo "  ✓ $tool"
   else
-    echo "  ✗ $s 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2
+    echo "  ✗ $tool 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2
+    failed=$(( failed + 1 ))
   fi
 done
 
 install -m 755 vision2md.py kaogong-ocr.sh "$BIN/"
 echo "  ✓ vision2md.py / kaogong-ocr.sh → $BIN"
-echo
-echo "  测试：$BIN/vision-ocr --help 2>/dev/null; echo ok"
+
+# 真跑一遍，不只看文件在不在
+if "$BIN/vision2md.py" --help >/dev/null 2>&1; then
+  echo "  ✓ vision2md.py 可执行"
+else
+  echo "  ✗ vision2md.py 跑不起来（python3 在吗？）" >&2
+  failed=$(( failed + 1 ))
+fi
+if bash -n "$BIN/kaogong-ocr.sh"; then
+  echo "  ✓ kaogong-ocr.sh 语法通过"
+else
+  echo "  ✗ kaogong-ocr.sh 语法错误" >&2
+  failed=$(( failed + 1 ))
+fi
+
+if [ "$failed" -gt 0 ]; then
+  echo "  $failed 项失败 —— 上面有原因" >&2
+  exit 1
+fi
+echo "  全部就绪：$BIN"

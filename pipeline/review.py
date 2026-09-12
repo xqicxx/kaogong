@@ -33,6 +33,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path.home() / "Documents" / "Obsidian Vault" / "考公"
+# 上次推送的卡片顺序。推送里说“回分：编号 评分”，没有这份映射就没法按编号回分。
+PUSH_STATE = Path.home() / ".pi" / "kaogong" / "last-push.json"
 CARD_DIR = ROOT / "考点"
 TG = Path.home() / ".pi" / "agent" / "telegram.json"
 
@@ -259,17 +261,54 @@ def cmd_push(args):
         print(msg)
         print("\n  （dry run，未发送；本次会推 %d 张）" % len(cards))
         return
-    print("  发送退出码 %s（%d 张）" % (send_tg(msg), len(cards)))
+    PUSH_STATE.parent.mkdir(parents=True, exist_ok=True)
+    PUSH_STATE.write_text(json.dumps(
+        {"date": str(date.today()), "cards": [c["path"].stem for c in cards]},
+        ensure_ascii=False, indent=1), encoding="utf-8")
+    print("  发送退出码 %s（%d 张，编号表已存 %s）" % (send_tg(msg), len(cards), PUSH_STATE))
+
+
+def resolve_card(spec):
+    """把「编号」或「卡片名」解析成一张卡。
+
+    两条硬规则（都是 review 指出的）：
+      · 数字按上次推送的编号解析，别猜
+      · 名字只允许唯一匹配 —— 模糊命中多张就报错，绝不能默默改错卡
+    """
+    cards = all_cards()
+    if spec.isdigit():
+        try:
+            saved = json.loads(PUSH_STATE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise SystemExit("读不到上次推送的编号表（%s），请用卡片名" % PUSH_STATE)
+        names = saved.get("cards") or []
+        try:
+            i = int(spec) - 1
+        except ValueError:                      # isdigit() 已挡一层，这里再兜一次
+            raise SystemExit("编号得是数字：%r" % spec)
+        if not 0 <= i < len(names):
+            raise SystemExit("编号 %s 超出上次推送范围（共 %d 张）" % (spec, len(names)))
+        hit = [c for c in cards if c["path"].stem == names[i]]
+        if not hit:
+            raise SystemExit("上次推送的第 %s 张「%s」现在找不到了" % (spec, names[i]))
+        return hit[0]
+    exact = [c for c in cards if c["path"].stem == spec]
+    if len(exact) == 1:
+        return exact[0]
+    fuzzy = [c for c in cards if spec in c["path"].stem]
+    if not fuzzy:
+        raise SystemExit("没找到卡片：%s" % spec)
+    if len(fuzzy) > 1:
+        raise SystemExit("「%s」匹配到 %d 张卡，说清楚是哪张：%s"
+                         % (spec, len(fuzzy), "、".join(x["path"].stem for x in fuzzy[:6])))
+    return fuzzy[0]
 
 
 def cmd_grade(args):
-    """grade <卡片名或序号> <1-4>。序号需配合 push 的顺序，简单起见按名字来。"""
-    hit = [c for c in all_cards() if c["path"].stem == args.card]
-    if not hit:
-        hit = [c for c in all_cards() if args.card in c["path"].stem]
-    if not hit:
-        raise SystemExit("没找到卡片：%s" % args.card)
-    c = hit[0]
+    """grade <编号|卡片名> <1-4>。编号来自最近一次 push 的顺序。"""
+    c = resolve_card(args.card)
+    if c["path"].stem != args.card and not args.card.isdigit():
+        print("  （按「%s」匹配到 %s）" % (args.card, c["path"].stem))
     # FSRS-4.5 里同日重复评分几乎不改变稳定度（R(0)=1 → 增量因子为 0），
     # FSRS-6 才专门处理同日复习。一天评一次是正常用法，但重复评要提醒，免得误以为“评了有用”。
     same_day = (c["state"] or {}).get("last") == date.today()

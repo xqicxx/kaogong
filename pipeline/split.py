@@ -63,12 +63,19 @@ def parse_pages(paths):
 
 
 def collect_items(pages):
-    """返回 [(heading_path, marker, term, body, page)]"""
+    """返回 [(heading_path, 原文, term, 解释, page)]。
+
+    条目可能跨行（中文会自动换行）：一句话没写完就继续往下吃，
+    直到遇见下一条目、下个标题或空行 —— 否则卡片只剩第一行，解释被截断。
+    """
     items = []
     for pg in pages:
         path = []
-        for raw in pg["body"].splitlines():
-            line = raw.strip()
+        lines = pg["body"].splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            i += 1
             if not line:
                 continue
             m = HEADING.match(line)
@@ -82,6 +89,14 @@ def collect_items(pages):
             if not mm:
                 continue
             term, rest = mm.group(1).strip(), mm.group(2).strip()
+            # 续行：既不是新条目，也不是标题
+            while i < len(lines):
+                nxt = lines[i].strip()
+                if not nxt or ITEM.match(nxt) or HEADING.match(nxt):
+                    break
+                rest += nxt
+                line += nxt
+                i += 1
             if len(term) < 2 or len(rest) < 6:
                 continue
             items.append((list(path), line, term, rest, pg["page"]))
@@ -89,7 +104,9 @@ def collect_items(pages):
 
 
 def safe_name(s):
-    return re.sub(r'[\\/:*?"<>|#\[\]]', "", s).strip()
+    """清掉文件名里不能出现的字符。清完为空就兜个名字 —— 否则会生成 ".md" 或 "-2.md"。"""
+    cleaned = re.sub(r'[\\/:*?"<>|#\[\]]', "", s).strip().strip(".")
+    return cleaned or "未命名"
 
 
 def main():
@@ -104,6 +121,9 @@ def main():
     args = ap.parse_args()
 
     subject, _, mod = args.module.partition("/")
+    if subject not in ("行测", "申论") or not mod:
+        raise SystemExit(
+            "--module 要写成 科目/模块，例如 行测/判断推理 或 申论/归纳概括（收到 %r）" % args.module)
     pages = parse_pages(args.pages)
     items = collect_items(pages)
 
@@ -193,12 +213,14 @@ def main():
             skipped.append(name)
             continue
         if p.exists():
+            # 以**旧文件的 front-matter** 为基准来改，而不是新生成的这份 ——
+            # 否则用户自己加的字段（比如 tags、自己的备注）会被悄悄丢掉。
             old_fm, _, old_raw = vault.read(p)
-            keep = {k: v for k, v in old_fm.items() if k in PRESERVE}
-            if keep:
-                fm, body, raw = vault.split(text)
-                vault.write(p, keep, body, raw)   # 只换正文，复习历史留着
-                kept += len(keep)
+            if old_fm:
+                _, body, _ = vault.split(text)
+                updates = {k: v for k, v in old_fm.items() if k in PRESERVE}
+                vault.write(p, updates, body, old_raw)
+                kept += len(updates)
                 written += 1
                 continue
         p.write_text(text, encoding="utf-8")
