@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pipeline import mistake, review, split, vault  # noqa: E402
+from pipeline import errors, fsrs, mistake, review, split, vault  # noqa: E402
 
 
 def load_vision2md():
@@ -98,13 +98,13 @@ def _md_escape():
 
 def _schedule_edges():
     today = date(2026, 9, 13)
-    state = review.schedule(None, 3, today)
+    state = fsrs.schedule(None, 3, today)
     for grade in (1, 2, 3, 4):
-        nxt = review.schedule(state, grade, state["due"])
+        nxt = fsrs.schedule(state, grade, state["due"])
         assert 1 <= nxt["d"] <= 10, "难度必须夹在 [1,10]，得到 %s" % nxt["d"]
         assert nxt["due"] > state["due"], "下次到期必须往后走"
         assert nxt["reps"] == state["reps"] + 1
-    assert review.r_of(0, 10) > review.r_of(100, 10), "R 必须随时间下降"
+    assert fsrs.r_of(0, 10) > fsrs.r_of(100, 10), "R 必须随时间下降"
 
 
 def _mastery_gates():
@@ -141,6 +141,29 @@ def _item_continuation():
 
 
 check("vault 边界", _vault_edges)
+def _domain_errors():
+    from pipeline import cards
+    try:
+        cards.find("根本不存在的卡片xyz")
+    except errors.CardNotFound:
+        pass
+    else:
+        raise AssertionError("找不到卡片要抛 CardNotFound")
+    try:
+        cards.find("支持")
+    except errors.AmbiguousCard:
+        pass
+    else:
+        raise AssertionError("模糊命中多张要抛 AmbiguousCard")
+    try:
+        fsrs.schedule(None, 9)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("非法评分要抛 ValueError")
+
+
+check("领域异常", _domain_errors)
 check("Markdown 转义", _md_escape)
 check("排期边界", _schedule_edges)
 check("三关闸门", _mastery_gates)

@@ -1,0 +1,10 @@
+{
+  "include": ["pipeline", "tools"],
+  "extraPaths": ["."],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none"
+}

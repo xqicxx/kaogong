@@ -466,6 +466,20 @@ kaogong-mistake  错题录入（问出信心与错因）→ 分流 → 关联 �
 自检    mistake.py selftest —— 状态机全路径 + 失败退级 + 非法状态归一
 ```
 
+### 6.3 代码结构（第四轮 review 后重构）
+
+原来的问题：`review.py` 一个文件同时管排期算法、卡片读写、Telegram 传输、命令行；
+vault 路径与状态路径硬编码在四个文件里；库函数直接 `SystemExit`。
+
+```text
+paths   路径唯一来源        errors  领域异常，只在 main() 翻成退出码
+fsrs    排期（纯函数）       mastery 掌握三关（纯函数）
+cards   卡片读写查找          notify  Telegram 传输
+vault   front-matter/快照    review / mistake / split 三个命令行
+```
+
+好处：路径改一处、算法能单独验、换推送通道不用碰排期。
+
 ---
 
 **一句话**：拍完发我 → 0.7 秒出 markdown → 我对着原图校准 → 进 Obsidian。

@@ -62,6 +62,28 @@ vision2md.py 与 kaogong-ocr.sh 现在是软链（改了立即生效），
 考公/_raw/<模块>/              机器原始产出（未校对），永不删
 ```
 
+### 模块划分
+
+```text
+pipeline/
+  paths.py    所有路径的唯一来源（KAOGONG_VAULT / KAOGONG_STATE 环境变量可覆盖，
+              所以测试能跑在临时库上，不碰真笔记）
+  errors.py   领域异常：CardNotFound / AmbiguousCard / InvalidState / ConfigError / DeliveryError
+  fsrs.py     排期算法 —— 纯函数，无 I/O，可以单独验
+  mastery.py  掌握三关状态机 —— 同样纯函数
+  cards.py    卡片读取 / 查找 / 写回状态（review 与 mistake 共用）
+  notify.py   Telegram 传输
+  vault.py    front-matter 读写、原子写、写前快照
+  review.py   命令行：排期 / 推送 / 回分
+  mistake.py  命令行：错题录入 / 分流 / 关联 / 验证
+  split.py    页面 markdown → 骨架 + 卡片
+```
+
+两条约定：
+
+- **库函数只管抛错，只有 main() 把异常翻成退出码**（不再从深处 SystemExit）
+- **纯逻辑（fsrs / mastery）不 import 任何做 I/O 的模块**，所以能被单独断言
+
 ## 数据安全与回滚
 
 流水线会写你的笔记，所以：

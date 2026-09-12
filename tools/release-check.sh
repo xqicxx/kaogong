@@ -12,11 +12,17 @@ PLIST="$HOME/Library/LaunchAgents/com.kaogong.review.plist"
 
 failed=0
 pass() { echo "  ✓ $1"; }
-fail() { echo "  ✗ $1" >&2; failed=$(( failed + 1 )); }
-section() { echo; echo "── $1 ──"; }
+fail() {
+  echo "  ✗ $1" >&2
+  failed=$((failed + 1))
+}
+section() {
+  echo
+  echo "── $1 ──"
+}
 
 section "1. 自检套件"
-if python3 pipeline/selftest.py > /tmp/release-selftest.log 2>&1; then
+if python3 pipeline/selftest.py >/tmp/release-selftest.log 2>&1; then
   pass "$(tail -1 /tmp/release-selftest.log | sed 's/^ *//')"
 else
   fail "自检未通过，看 /tmp/release-selftest.log"
@@ -40,12 +46,12 @@ for script in vision2md.py kaogong-ocr.sh; do
 done
 
 section "3. Python 依赖与语法"
-if python3 -c "import ast,sys; [ast.parse(open('pipeline/'+f).read()) for f in ('vault.py','review.py','mistake.py','split.py','selftest.py')]" 2>/dev/null; then
+if python3 -c "import ast,sys; [ast.parse(open('pipeline/'+f).read()) for f in ('paths.py','errors.py','fsrs.py','cards.py','notify.py','mastery.py','vault.py','review.py','mistake.py','split.py','selftest.py')]" 2>/dev/null; then
   pass "pipeline/*.py 语法通过"
 else
   fail "pipeline 里有语法错误"
 fi
-for m in vault review mistake split; do
+for m in paths errors fsrs cards notify mastery vault review mistake split; do
   if python3 -c "import sys; sys.path.insert(0,'.'); from pipeline import $m" 2>/dev/null; then
     pass "pipeline.$m 可导入"
   else
@@ -55,7 +61,7 @@ done
 
 section "4. Obsidian 目录结构"
 for d in 行测/常识判断 行测/言语理解与表达 行测/数量关系 行测/判断推理 行测/资料分析 \
-         申论/归纳概括 申论/综合分析 申论/提出对策 申论/贯彻执行 申论/申发论述 错题 _raw; do
+  申论/归纳概括 申论/综合分析 申论/提出对策 申论/贯彻执行 申论/申发论述 错题 _raw; do
   if [ -d "$VAULT/$d" ]; then
     pass "考公/$d"
   else
