@@ -40,11 +40,20 @@ description: "考公讲义/书页照片 → 校准过的 markdown → Obsidian �
 -->
 ```
 
-### ③ `_raw/` 永不删
+### ③ 写完笔记更新检索索引
+
+```bash
+qmd update          # 1 秒，增量；不跑的话新笔记搜不到
+```
+
+找同知识点题、关联错题靠 `qmd search <词> -c notes` —— **必须带 `-c notes`**，
+不带会去搜 pi-memory，永远搜不到笔记。
+
+### ④ `_raw/` 永不删
 
 原始识别件必须留着 —— 任何时候都要能对回机器原文，分得清是**识别错**还是**校错**。
 
-### ④ 切考点（可选，用户要卡片时做）
+### ⑤ 切考点（可选，用户要卡片时做）
 
 ```bash
 python3 ~/code/kaogong/pipeline/split.py --module 行测/判断推理 --lecture <讲义名> \

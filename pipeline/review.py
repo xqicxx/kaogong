@@ -200,6 +200,17 @@ def build_message(limit):
         for i, c in enumerate(newt[:3], len(review[:limit]) + 1):
             lines.append("%d. %s · %s" % (i, c["path"].stem, c["fm"].get("模块", "")))
             lines.append("")
+    verify = [c for c in all_cards()
+              if (c["fm"].get("状态") or "").strip() in ("变式中", "迁移中", "待保持")]
+    if verify:
+        lines.append("**🧪 待验证（掌握三关）**")
+        lines.append("")
+        for c in verify[:5]:
+            s = (c["fm"].get("状态") or "").strip()
+            keep = c["fm"].get("保持测试") or ""
+            tail = "　保持测试 %s" % keep if s == "待保持" and keep else ""
+            lines.append("• %s　[%s]%s" % (c["path"].stem, s, tail))
+            lines.append("")
     lines.append("---")
     lines.append("")
     lines.append("回分：`编号 评分`　1=忘了　2=勉强　3=对了　4=太简单")
@@ -283,7 +294,8 @@ def cmd_selftest(args):
     today = date(2026, 9, 13)
     st = schedule(None, 3, today)
     ivl = (st["due"] - today).days
-    assert abs(ivl - FIRST_INTERVAL_DAYS) <= 1, "首轮间隔应≈%.0f 天，实际 %d" % (FIRST_INTERVAL_DAYS, ivl)
+    msg = "首轮间隔应≈%.0f 天，实际 %d" % (FIRST_INTERVAL_DAYS, ivl)
+    assert abs(ivl - FIRST_INTERVAL_DAYS) <= 1, msg
     again = schedule(st, 1, st["due"])
     good = schedule(st, 3, st["due"])
     easy = schedule(st, 4, st["due"])
