@@ -137,3 +137,8 @@ echo "  源: $SOURCE   模块: $MODULE   成功 ${#JSONS[@]} 张"
 echo "  矫正 ${t_rect}ms  OCR ${t_ocr}ms"
 python3 "$BIN/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" $DEDUP "${JSONS[@]}"
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
+# 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
+if [ "$FAILED" -gt 0 ]; then
+  echo "  ⚠️ $FAILED 张失败，产物不完整" >&2
+  exit 5
+fi

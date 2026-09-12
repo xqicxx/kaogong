@@ -104,7 +104,10 @@ else
 fi
 
 section "7. 仓库卫生"
-if git status --porcelain | grep -q .; then
+git_status=$(git status --porcelain 2>&1)
+if [ $? -ne 0 ]; then
+  fail "git status 跑不了：$git_status"
+elif [ -n "$git_status" ]; then
   fail "有未提交的改动"
 else
   pass "工作区干净"
@@ -114,10 +117,19 @@ if git ls-files | grep -qE "(__pycache__|\.pyc$)"; then
 else
   pass "没有编译缓存"
 fi
-if git ls-files | grep -qiE "(secret|token|\.env$)"; then
-  fail "仓库里疑似有密钥文件"
+tracked=$(git ls-files)
+if [ -z "$tracked" ]; then
+  fail "git ls-files 没返回文件（仓库出问题了？）"
 else
-  pass "没有密钥文件"
+  # 先看文件名，再看内容 —— 只查文件名会漏掉写在脚本里的 key
+  name_hit=$(printf '%s\n' "$tracked" | grep -iE "(secret|credential|\.env$|id_rsa)" || true)
+  # 模式用单引号包，避免里面的引号把整个脚本的字符串搞断
+  content_hit=$(printf '%s\n' "$tracked" | xargs grep -lE 'sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|api[_-]?key[[:space:]]*=[[:space:]]*' 2>/dev/null || true)
+  if [ -n "$name_hit" ] || [ -n "$content_hit" ]; then
+    fail "仓库里疑似有密钥：${name_hit}${content_hit}"
+  else
+    pass "没有密钥文件，也没扫到硬编码 key"
+  fi
 fi
 
 section "结果"

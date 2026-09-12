@@ -4,6 +4,16 @@ import CoreImage
 import AppKit
 
 // 自动找文档四角 + 透视校正。找不到就原样输出（后续 OCR 仍能跑，只是质量差些）。
+import ImageIO
+
+/// 从图片文件读 EXIF 方向；读不到就按 .up。
+func ExifOrientation(of url: URL) -> UInt32 {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let raw = properties[kCGImagePropertyOrientation] as? UInt32 else { return 1 }
+    return raw
+}
+
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
     FileHandle.standardError.write(Data("usage: rectify <in.jpg> <out.jpg>\n".utf8))
@@ -19,7 +29,9 @@ guard let image = CIImage(contentsOf: inputURL) else {
     FileHandle.standardError.write(Data("读不到图片：\(arguments[1])\n".utf8))
     exit(2)
 }
-let handler = VNImageRequestHandler(ciImage: image, options: [:])
+// 手机拍的照片带 EXIF 旋转标记，不告诉 Vision 会把页面当横躺的
+let orientation = CGImagePropertyOrientation(rawValue: ExifOrientation(of: inputURL)) ?? .up
+let handler = VNImageRequestHandler(ciImage: image, orientation: orientation, options: [:])
 var detected: VNRectangleObservation?
 
 if #available(macOS 13.0, *) {
@@ -62,16 +74,40 @@ func write(_ output: CIImage, note: String) {
     }
 }
 
-/// 检测到的四边形在画面里占多大（归一化包围盒面积）。
-/// 太小的多半是图章、二维码或局部边框 —— 按它做透视校正会把整页裁成一小块。
-func coverage(_ box: VNRectangleObservation) -> CGFloat {
-    let horizontal = [box.topLeft.x, box.topRight.x, box.bottomLeft.x, box.bottomRight.x]
-    let vertical = [box.topLeft.y, box.topRight.y, box.bottomLeft.y, box.bottomRight.y]
-    return (horizontal.max()! - horizontal.min()!) * (vertical.max()! - vertical.min()!)
+/// 四边形的真实面积（鞋带公式，归一化坐标）。
+/// 之前用「包围盒面积」，共线或自交的退化四边形也能过 0.25 的门槛，
+/// 然后 CIPerspectiveCorrection 会把它拉成一个巨大的畸变图。
+func polygonArea(_ box: VNRectangleObservation) -> CGFloat {
+    let points = [box.topLeft, box.topRight, box.bottomRight, box.bottomLeft]
+    var sum: CGFloat = 0
+    for index in 0..<points.count {
+        let current = points[index]
+        let next = points[(index + 1) % points.count]
+        sum += current.x * next.y - next.x * current.y
+    }
+    return abs(sum) / 2
 }
 
-guard let box = detected, coverage(box) >= 0.25 else {
-    FileHandle.standardError.write(Data("没找到足够大的页面（面积占比 < 25%），按原图输出\n".utf8))
+/// 四边形是否凸（叉积同号）。自交的四边形不是凸的，不能拿来校正。
+func isConvex(_ box: VNRectangleObservation) -> Bool {
+    let points = [box.topLeft, box.topRight, box.bottomRight, box.bottomLeft]
+    var signs: [CGFloat] = []
+    for index in 0..<points.count {
+        let a = points[index]
+        let b = points[(index + 1) % points.count]
+        let c = points[(index + 2) % points.count]
+        signs.append((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x))
+    }
+    return signs.allSatisfy { $0 >= 0 } || signs.allSatisfy { $0 <= 0 }
+}
+
+func looksLikePage(_ box: VNRectangleObservation) -> Bool {
+    let area = polygonArea(box)
+    return area >= 0.25 && area <= 0.999 && isConvex(box)
+}
+
+guard let box = detected, looksLikePage(box) else {
+    FileHandle.standardError.write(Data("没找到像样的页面区域（面积/凸性不合格），按原图输出\n".utf8))
     write(image, note: "NO_DOCUMENT_DETECTED")
     exit(0)
 }

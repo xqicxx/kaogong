@@ -66,12 +66,16 @@ for observation in observations {
                           confidence: candidate.confidence, alternates: Array(alternates)))
 }
 
-// 阅读顺序：先按纵向分行（重叠视为同一行），行内按横向
-lines.sort { $0.top < $1.top }
+// 阅读顺序：先按纵向（同一行按横向），JSON 与纯文本共用这一份排序 ——
+// 否则同一行的几个框在两处输出里顺序不一致
+lines.sort { $0.top == $1.top ? $0.left < $1.left : $0.top < $1.top }
 var rows: [[TextLine]] = []
 var currentRow: [TextLine] = []
 for line in lines {
-    if let first = currentRow.first, line.top - first.top > line.height * 0.6 {
+    // 与“整行已占据的纵向范围”比，而不是只跟第一行的 top 比 ——
+    // 只比第一行会把倾斜或有上标的行拆成两行
+    let rowBottom = currentRow.map { $0.top + $0.height }.max() ?? line.top
+    if line.top - rowBottom > line.height * 0.6 {
         rows.append(currentRow); currentRow = [line]
     } else { currentRow.append(line) }
 }

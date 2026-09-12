@@ -13,7 +13,14 @@ failed=0
 for tool in rectify vision-ocr deink crop; do
   rm -f "$BIN/$tool" # 失败时别留着旧二进制冒充新版本
   if swiftc -O "$tool.swift" -o "$BIN/$tool"; then
-    echo "  ✓ $tool"
+    # 编译过 ≠ 能跑：架构不匹配、dylib 缺失、Gatekeeper 拦截都是运行期才暴露。
+    # 这几个工具无参时都会打印用法并非零退出，正好当冒烟测试。
+    if "$BIN/$tool" >/dev/null 2>&1; then
+      echo "  ✗ $tool 编译成功但运行异常（无参时本该非零退出并给用法）" >&2
+      failed=$(( failed + 1 ))
+    else
+      echo "  ✓ $tool"
+    fi
   else
     echo "  ✗ $tool 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2
     failed=$((failed + 1))

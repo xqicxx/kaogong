@@ -51,20 +51,37 @@ TERMINAL = "。！？；…\"'）)」』】"
 PAGE_NUM = re.compile(r"^第?\s*[0-9０-９一二三四五六七八九十]{1,4}\s*[页頁]?$")
 
 
-def load(path):
-    """读一页的 OCR JSON。读不动就报清楚是哪一步坏了 —— 原来这里裸抛，
-    一整批会带着 traceback 挂掉，看不出是哪个文件、什么原因。"""
+def normalize_line(raw):
+    """把一条 OCR 行规整成内部结构；缺字段/类型不对就丢掉这一行。
+
+    直接 l["y"] 这种索引在脏数据上会 KeyError，一页坏行就把整批转换带崩。
+    行级容错比整批失败划算：丢一行只是个错字，丢一批是白干。
+    """
     try:
-        raw = Path(path).read_text(encoding="utf-8")
+        text = str(raw.get("text", "")).strip()
+        if not text:
+            return None
+        return {"text": text,
+                "y": float(raw["y"]), "x": float(raw["x"]), "h": float(raw["h"]),
+                "w": float(raw.get("w", 0.0)), "conf": float(raw.get("conf", 1.0))}
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def load(path):
+    """读一页的 OCR JSON。读不动就报清楚是哪一步坏了。"""
+    try:
+        raw_text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise SystemExit("读不到 OCR 结果 %s：%s" % (path, exc))
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(raw_text)
     except ValueError as exc:
         raise SystemExit("OCR 结果不是合法 JSON（%s）：%s —— 上游 vision-ocr 是不是失败了？"
                          % (path, exc))
-    lines = [l for l in parsed.get("lines", []) if l.get("text", "").strip()]
-    lines.sort(key=lambda l: (l["y"], l["x"]))
+    lines = [line for line in (normalize_line(item) for item in parsed.get("lines", []))
+             if line]
+    lines.sort(key=lambda item: (item["y"], item["x"]))
     return {"path": str(path), "seconds": parsed.get("seconds", 0), "lines": lines}
 
 
@@ -247,6 +264,9 @@ def page_to_md(pg, noise, source, page_no, low_conf):
     return out, chars
 
 
+PAGE_PREFIX = re.compile(r"^(\d{3})-")
+
+
 def page_text(page):
     """把一页的行拼成用于比较的文本。"""
     return "\n".join(line["text"] for line in page["lines"])
@@ -310,7 +330,11 @@ def main():
     noise = batch_noise(pages)
     total = 0
     for i, pg in enumerate(pages):
-        md, chars = page_to_md(pg, noise, args.source, args.start_page + i, args.low_conf)
+        # 页号跟“输入里的第几张”走，而不是“成功处理的第几张”——
+        # 中间有一张失败时，后者会把后面的页整体往前挪一位
+        matched = PAGE_PREFIX.match(Path(pg["path"]).stem)
+        page_no = (args.start_page + int(matched.group(1)) - 1) if matched else (args.start_page + i)
+        md, chars = page_to_md(pg, noise, args.source, page_no, args.low_conf)
         total += chars
         if args.stdout:
             sys.stdout.write(md + "\n")
