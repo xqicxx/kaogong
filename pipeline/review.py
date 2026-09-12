@@ -264,6 +264,9 @@ def cmd_grade(args):
     if not hit:
         raise SystemExit("没找到卡片：%s" % args.card)
     c = hit[0]
+    # FSRS-4.5 里同日重复评分几乎不改变稳定度（R(0)=1 → 增量因子为 0），
+    # FSRS-6 才专门处理同日复习。一天评一次是正常用法，但重复评要提醒，免得误以为“评了有用”。
+    same_day = (c["state"] or {}).get("last") == date.today()
     st = schedule(c["state"], args.rating)
     fm, raw, body = c["fm"], c["raw"], c["body"]
     fm[KEYS["s"]], fm[KEYS["d"]] = st["s"], st["d"]
@@ -273,6 +276,9 @@ def cmd_grade(args):
     print("  %s  评分 %d  S=%.1f D=%.2f  下次 %s（%.0f 天后）" % (
         c["path"].stem, args.rating, st["s"], st["d"], st["due"],
         (st["due"] - date.today()).days))
+    if same_day:
+        print("    ⚠️ 今天已经评过这张卡了 —— 同日重复评分不改变稳定度"
+              "（FSRS-4.5 的 R(0)=1，增量因子为 0），间隔不会因此拉长")
 
 
 def cmd_stats(args):
