@@ -18,8 +18,23 @@ from pipeline.paths import CARD_DIR, PUSH_STATE  # type: ignore[import]  # noqa:
 from pipeline.vault import read, write  # type: ignore[import]  # noqa: E402
 
 
+def state_health(front_matter):
+    """卡片排期状态是否健康。
+
+    区分三种情况很重要：
+      "none"    没有排期字段 —— 新卡，正常
+      "ok"      字段齐全可解析
+      "broken"  字段在但读不出来（手改坏/半截写入）—— **不能当成新卡**，
+                否则下一次 save_state 就会拿“新卡”的值覆盖掉真实复习历史
+    """
+    keys = KEYS
+    if not any(front_matter.get(k) for k in (keys["due"], keys["s"], keys["d"])):
+        return "none"
+    return "ok" if read_state(front_matter) else "broken"
+
+
 def read_state(front_matter):
-    """从 front-matter 解出排期状态；缺字段或格式坏了就当作“没排期”。"""
+    """从 front-matter 解出排期状态；缺字段返回 None（由 state_health 区分缺与坏）。"""
     keys = KEYS
     if not front_matter.get(keys["due"]):
         return None

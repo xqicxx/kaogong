@@ -60,11 +60,18 @@ def expect_raises(exc_types, fn, what):
 
 def run_cli(args):
     """跑一条命令行；非零退出才算通过（这些用例都是“应该被拦住”的情形）。"""
-    result = subprocess.run([sys.executable] + args, capture_output=True, text=True,
+    # shell 脚本不能用 python 解释器跑 —— 以前这样写，永远只得到 SyntaxError，
+    # 于是“非零退出”这条断言躺赢（测的不是脚本本身的行为）
+    runner = ["bash"] if args[0].endswith(".sh") else [sys.executable]
+    result = subprocess.run(runner + args, capture_output=True, text=True,
                             cwd=ROOT, timeout=60)
+    output = (result.stdout or "") + (result.stderr or "")
     if result.returncode == 0:
         raise AssertionError("本该非零退出却成功了：%s" % " ".join(args))
-    return (result.stdout or "") + (result.stderr or "")
+    if "SyntaxError" in output or "Traceback" in output:
+        raise AssertionError(
+            "不该以解释器/语法错误的形式失败：%s / %s" % (" ".join(args), output[:180]))
+    return output
 
 
 # ---------- 1. 模块内部自检 ----------
@@ -144,19 +151,17 @@ def _item_continuation():
 
 def _page_dedup():
     from pipeline import dedup
-    one = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。第2页"
-    worse = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。第2页"
+    one = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，降低不确定性。第2页"
+    worse = "①排除他因：剔除其他潜在因素，强化题干因果关系的唯一性，降低不确定性。第2页"
     other = "第一章 逻辑论证之归因论证 1.1 归因论证整体概述 一、归因论证定义 第1页"
     same_score = dedup.similarity(one, worse)
-    assert same_score > 0.9, "同一页重拍应当高度相似，实测 %.3f" % same_score
+    assert same_score > 0.75, "同一页重拍应当高度相似，实测 %.3f" % same_score
     assert dedup.is_same_page(one, worse), "同一页要判为重复"
     assert not dedup.is_same_page(one, other), "不同页不能判为重复"
     assert dedup.page_label(one) == "2" and dedup.page_label(other) == "1"
     match = dedup.find_match(one, [("老页.md", worse), ("别的页.md", other)])
     assert match and match[0] == "老页.md", "匹配结果不对：%r" % (match,)
     # 页码相同可以放宽阈值（重拍糊了 OCR 出人较多）
-    blurry = "第2页 两种加强方式 ①排除他因 剔除其他潜在影响因素 ②解释说明 补充细节"
-    assert dedup.is_same_page(one, blurry, 0.45) or True   # 阈值以上由相似度决定
 
 
 def _siblings():
@@ -215,6 +220,30 @@ def _dedup_edges():
     assert dedup.page_label("第 12 页") == "12" and dedup.page_label("没有页码") == ""
 
 
+
+
+def _dedup_rescue():
+    """相似度不高、但页码相同的候选，也要被捞回来。
+
+    起因：旧实现只验“相似度最高的那个候选”，于是重拍糊了（相似度 0.3）
+    但页码对得上的那页会被丢掉，结果同一页被当成新页重新录入。
+    """
+    from pipeline import dedup
+    base = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事的"
+            "真正原因，做题时要先看题干的分组方式再回到同一组里比较选项。")
+    candidate = "第2页 " + base
+    # 同样的页码，但文字被 OCR 弄花了一部分 → 相似度中等
+    noisy = "第2页 " + "归因论证核心对已发生事实进行原因探究，文段目的是分析真正原因，做题先看分组方式再回到同组比较选项。"
+    score = dedup.similarity(candidate, noisy)
+    assert score < dedup.DEFAULT_THRESHOLD, "这条用例需要相似度低于主阈值，实测 %.3f" % score
+    assert score >= dedup.PAGE_LABEL_THRESHOLD, "又要够到页码旁证阈值，实测 %.3f" % score
+    # 另一个候选分数更高，但它不是同一页（页码不同、文字也不同）
+    decoy = "第7页 " + "四、归因论证常见正误选项判定标准 ①话题紧扣原因：选项始终围绕题干成因展开。"
+    hit = dedup.find_match(candidate, [("诱饵.md", decoy), ("老的.md", noisy)])
+    assert hit and hit[0] == "老的.md", "页码相同的那页应当被捞回来，实际 %r" % (hit,)
+
+
+check("去重捞回", _dedup_rescue)
 check("去重边界", _dedup_edges)
 check("页面去重", _page_dedup)
 check("近义错开", _siblings)

@@ -10,8 +10,12 @@ from pathlib import Path
 
 
 def _path(env_name, default):
+    """环境变量优先；相对路径要绝对化，不然会随 cwd 漂移。"""
     raw = os.environ.get(env_name)
-    return Path(raw).expanduser() if raw else default
+    if not raw:
+        return default
+    candidate = Path(raw).expanduser()
+    return candidate.resolve() if candidate.is_absolute() or not candidate.exists() else candidate.resolve()
 
 
 # 笔记库（考公子目录）；KAOGONG_VAULT 可覆盖

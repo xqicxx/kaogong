@@ -29,18 +29,22 @@ HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 TERM = re.compile(r"^\s*[①-⑳\d（()）.、]*\s*([^：:，。]{2,24})[：:]\s*(.*)$")
 
 
-def read_front_matter(text):
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end < 0:
-        return {}, text
-    fm = {}
-    for line in text[3:end].splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            fm[k.strip()] = v.strip()
-    return fm, text[end + 4:].lstrip("\n")
+# 解析统一走 vault（自带的那版用子串找分隔符，正文里的 ---foo 会截断正文）
+read_front_matter = vault.split
+
+
+
+
+def _write_note(path, text):
+    """新建/覆盖一个笔记文件。走 vault 的原子写 + 写前快照，
+    不要用裸 write_text（中途崩会留下半截文件，而且没有快照可回滚）。
+    """
+    front_matter, body, raw = vault.split(text)
+    if front_matter:
+        vault.write(path, front_matter, body, raw)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 def parse_pages(paths):
@@ -135,9 +139,9 @@ def main():
     skel = [
         "---",
         "type: 骨架",
-        "科目: %s" % subject,
-        "模块: %s" % mod,
-        "讲义: %s" % args.lecture,
+        "科目: %s" % vault.yaml_value(subject),
+        "模块: %s" % vault.yaml_value(mod),
+        "讲义: %s" % vault.yaml_value(args.lecture),
         "页码: %s" % ("%d-%d" % (pages[0]["page"], pages[-1]["page"]) if pages else "-"),
         "tags: [考公/%s, %s]" % (subject, args.lecture),
         "---",
@@ -171,11 +175,11 @@ def main():
         card = [
             "---",
             "type: 考点",
-            "科目: %s" % subject,
-            "模块: %s" % mod,
+            "科目: %s" % vault.yaml_value(subject),
+            "模块: %s" % vault.yaml_value(mod),
             "所属小节: \"[[%s]]\"" % safe_name(args.lecture),
-            "分组: %s" % group,
-            "来源: %s p%d" % (args.source or args.lecture, page),
+            "分组: %s" % vault.yaml_value(group),
+            "来源: %s" % vault.yaml_value("%s p%d" % (args.source or args.lecture, page)),
             "tags: [考点, %s/%s]" % (subject, mod),
             "状态: 未掌握",
             "---",
@@ -205,7 +209,7 @@ def main():
         return
 
     skel_path.parent.mkdir(parents=True, exist_ok=True)
-    skel_path.write_text("\n".join(skel), encoding="utf-8")
+    _write_note(skel_path, "\n".join(skel))
     card_dir = ROOT / "考点"
     card_dir.mkdir(parents=True, exist_ok=True)
     written, skipped, kept = 0, [], 0
@@ -236,7 +240,7 @@ def main():
                 kept += sum(1 for key in PRESERVE if key in old_fm)
                 written += 1
                 continue
-        p.write_text(text, encoding="utf-8")
+        _write_note(p, text)
         written += 1
     print("  骨架 %s  （%d 页）" % (skel_path.relative_to(ROOT), len(pages)))
     print("  卡片 新写 %d 张 / 跳过已存在 %d 张 → %s" % (written, len(skipped), card_dir.relative_to(ROOT)))

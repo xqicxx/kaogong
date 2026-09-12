@@ -94,7 +94,7 @@ def cmd_new(args):
     front_matter = {
         "type": "错题",
         "科目": args.subject,
-        "模块": args.module,
+        "模块": yaml_value(args.module),
         "知识点": "[%s]" % ", ".join('"%s"' % p for p in points) if points else "[]",
         "来源": yaml_value(args.source or ""),
         "日期": str(date.today()),
@@ -106,8 +106,8 @@ def cmd_new(args):
     }
     body = BODY.format(stem=args.stem, cause=args.cause, advice=CAUSES[args.cause],
                        lecture=("[[%s]]" % args.lecture) if args.lecture else "")
-    target.write_text("---\n" + "\n".join("%s: %s" % kv for kv in front_matter.items())
-                      + "\n---\n\n" + body, encoding="utf-8")
+    # 走 vault.write：原子写 + 写前快照，不要裸 write_text
+    write(target, front_matter, body, "")
     print("  新建 %s" % target.relative_to(VAULT_ROOT))
     print("  分流：%s → %s" % (args.cause, CAUSES[args.cause]))
     if args.confidence == "高" and args.cause == "概念性":

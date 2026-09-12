@@ -45,8 +45,14 @@ def similarity(left, right):
     first, second = shingles(left), shingles(right)
     if not first or not second:
         return 0.0
-    if len(first) < 8 or len(second) < 8:      # 行数太少时 Jaccard 不稳
-        return min(len(first), len(second)) / max(len(first), len(second))
+    if len(first) < 8 or len(second) < 8:
+        # 短文本不能用长度比："abc" 与 "xyz" 长度一样，长度比会给 1.0（完全错）。
+        # 拆成字符集合后看交集：完全不同就是 0，完全相同才是 1。
+        left_chars = set("".join(first))
+        right_chars = set("".join(second))
+        if not left_chars or not right_chars:
+            return 0.0
+        return len(left_chars & right_chars) / len(left_chars | right_chars)
     return len(first & second) / len(first | second)
 
 
@@ -109,22 +115,22 @@ def is_same_page(left, right, threshold=DEFAULT_THRESHOLD):
 
 
 def find_match(candidate_text, existing, threshold=DEFAULT_THRESHOLD):
-    """在 existing（[(名字, 文本)]）里找与候选页最像的一页。
+    """在 existing（[(名字, 文本)]）里找与候选页匹配的那一页。
 
-    返回 (名字, 相似度) 或 None。CJK 字数差太多时直接跳过比较，省时间也避免误判。
+    返回 (名字, 相似度) 或 None。
+
+    ⚠️ 不能只验“相似度最高的那个”：重拍糊了的页可能相似度只有 0.3，
+    但它和已有页的**页码相同**，按 PAGE_LABEL_THRESHOLD 应当被判为同一页。
+    所以：按相似度从高到低逐个用 is_same_page 验，第一个通过的就返回。
     """
     target = len(CJK.findall(candidate_text))
-    best = None
+    scored = []
     for name, text in existing:
         size = len(CJK.findall(text))
         if target and size and (max(target, size) / max(1, min(target, size))) > 1.6:
             continue                           # 长度差一倍半以上，不可能同页
-        score = similarity(candidate_text, text)
-        if best is None or score > best[1]:
-            best = (name, score, text)
-    if best is None:
-        return None
-    # 用同一个判据复核（相似度阈值 + 页码旁证），而不是只看谁分高
-    if is_same_page(candidate_text, best[2], threshold):
-        return (best[0], best[1])
+        scored.append((similarity(candidate_text, text), name, text))
+    for score, name, text in sorted(scored, key=lambda item: -item[0]):
+        if is_same_page(candidate_text, text, threshold):
+            return (name, score)
     return None
