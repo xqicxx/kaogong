@@ -20,8 +20,13 @@ for tool in rectify vision-ocr deink crop; do
   fi
 done
 
-install -m 755 vision2md.py kaogong-ocr.sh "$BIN/"
-echo "  ✓ vision2md.py / kaogong-ocr.sh → $BIN"
+# 这两个是脚本，直接软链过去 —— 否则改了仓库里的版本，跑的还是 ~/.pi/bin 里的旧副本
+# （这个坑真踩过：修了参数校验，测出来还是老行为，因为跑的是没更新的拷贝）
+for script in vision2md.py kaogong-ocr.sh; do
+  rm -f "$BIN/$script"
+  ln -s "$(pwd)/$script" "$BIN/$script"
+done
+echo "  ✓ vision2md.py / kaogong-ocr.sh → $BIN（软链，改了立即生效）"
 
 # 真跑一遍，不只看文件在不在
 if "$BIN/vision2md.py" --help >/dev/null 2>&1; then

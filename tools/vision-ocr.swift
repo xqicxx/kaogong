@@ -4,9 +4,14 @@ import AppKit
 import ImageIO
 
 let args = CommandLine.arguments
-guard args.count >= 2 else { print("usage: vision-ocr <image> [--json]"); exit(1) }
+let knownFlags: Set<String> = ["--json", "--plain"]
+// 不能写死 args[1] 当图片路径：vision-ocr --json 图.png 会把 "--json" 当文件名
+guard let imagePath = args.dropFirst().first(where: { !knownFlags.contains($0) }) else {
+    print("usage: vision-ocr <image> [--json] [--plain]")
+    exit(1)
+}
 let jsonMode = args.contains("--json")
-guard let image = NSImage(contentsOfFile: args[1]),
+guard let image = NSImage(contentsOfFile: imagePath),
       let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
     FileHandle.standardError.write("cannot load image\n".data(using: .utf8)!); exit(2)
 }
@@ -25,7 +30,8 @@ func exifOrientation(of path: String) -> CGImagePropertyOrientation {
     return orientation
 }
 
-let handler = VNImageRequestHandler(cgImage: source, orientation: exifOrientation(of: args[1]), options: [:])
+let handler = VNImageRequestHandler(cgImage: source,
+                                     orientation: exifOrientation(of: imagePath), options: [:])
 let started = Date()
 do {
     try handler.perform([request])

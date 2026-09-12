@@ -121,6 +121,10 @@ def main():
     args = ap.parse_args()
 
     subject, _, mod = args.module.partition("/")
+    # 先读页面：一页都读不出来就什么都别写 —— 否则会把好好的骨架换成只有头部的空文件
+    pages_probe = [p for p in args.pages if Path(p).exists()]
+    if not pages_probe:
+        raise SystemExit("给的页面文件一个都不存在，什么都没改：%s" % args.pages)
     if subject not in ("行测", "申论") or not mod:
         raise SystemExit(
             "--module 要写成 科目/模块，例如 行测/判断推理 或 申论/归纳概括（收到 %r）" % args.module)
@@ -210,17 +214,26 @@ def main():
         if p.exists() and not args.force:
             # 卡片已经存在 → 不动它。里面可能已经有复习历史，
             # 重切一次就把它清零是数据损失（这条是 code review 抓出来的）。
-            skipped.append(name)
+            old_fm, _, _ = vault.read(p)
+            owner = (old_fm.get("所属小节") or "").strip()
+            if owner and args.lecture not in owner:
+                # 考点目录是平铺的：不同讲义出现同名考点时会撞车
+                skipped.append("%s（现属于 %s）" % (name, owner))
+            else:
+                skipped.append(name)
             continue
         if p.exists():
-            # 以**旧文件的 front-matter** 为基准来改，而不是新生成的这份 ——
-            # 否则用户自己加的字段（比如 tags、自己的备注）会被悄悄丢掉。
             old_fm, _, old_raw = vault.read(p)
-            if old_fm:
-                _, body, _ = vault.split(text)
-                updates = {k: v for k, v in old_fm.items() if k in PRESERVE}
-                vault.write(p, updates, body, old_raw)
-                kept += len(updates)
+            new_fm, body, _ = vault.split(text)
+            if old_fm and new_fm:
+                # 元数据以新卡片为准（分组/来源/标签可能变了），复习历史从旧卡搬过来；
+                # 底稿用旧 raw，这样用户自己加的字段也不会丢
+                merged = dict(new_fm)
+                for key in PRESERVE:
+                    if key in old_fm:
+                        merged[key] = old_fm[key]
+                vault.write(p, merged, body, old_raw)
+                kept += sum(1 for key in PRESERVE if key in old_fm)
                 written += 1
                 continue
         p.write_text(text, encoding="utf-8")

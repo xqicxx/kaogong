@@ -44,6 +44,15 @@ pipeline/split.py --module 行测/判断推理 --lecture 逻辑论证-归因论�
   "$HOME/Documents/Obsidian Vault/考公/行测/判断推理/逻辑论证-归因论证-p001.md" ...
 ```
 
+
+## ⚠️ 改了 tools/ 之后一定要重跑安装
+
+    ~/code/kaogong/tools/install.sh
+
+vision2md.py 与 kaogong-ocr.sh 现在是软链（改了立即生效），
+但 **Swift 二进制（rectify / deink / vision-ocr / crop）是编译产物，必须重装才生效**。
+踩过这个坑：改完参数校验去测试，行为没变 —— 因为跑的还是 ~/.pi/bin 里的旧拷贝。
+
 ## 两类笔记
 
 ```text

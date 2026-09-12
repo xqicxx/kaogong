@@ -65,8 +65,8 @@ def norm_state(v):
 # 三关就白设计了（open-code-review 指出的问题）。
 GATE = {
     "变式": ("未掌握", "变式中", "迁移中", "待保持", "已掌握"),
-    "迁移": ("变式中", "迁移中"),      # 必须先过变式关（连续 2 次正确）
-    "保持": ("待保持",),                # 必须先过迁移关
+    "迁移": ("迁移中",),   # 只能从「迁移中」考 —— 变式连胜够 2 次才会进这个状态
+    "保持": ("待保持",),   # 只能从「待保持」考 —— 迁移过关才会进
 }
 
 
@@ -123,10 +123,17 @@ def advance(state, kind, ok, today=None, stability=12.0):
 
 
 def find_card(name):
-    hit = [p for p in CARD_DIR.glob("*.md") if p.stem == name]
-    if not hit:
-        hit = [p for p in CARD_DIR.glob("*.md") if name in p.stem]
-    return hit[0] if hit else None
+    """精确优先；模糊命中多张就报错 —— 改错卡比找不到卡危险得多。"""
+    exact = [p for p in sorted(CARD_DIR.glob("*.md")) if p.stem == name]
+    if len(exact) == 1:
+        return exact[0]
+    fuzzy = [p for p in sorted(CARD_DIR.glob("*.md")) if name in p.stem]
+    if not fuzzy:
+        return None
+    if len(fuzzy) > 1:
+        raise SystemExit("「%s」匹配到 %d 张卡，说清楚是哪张：%s"
+                         % (name, len(fuzzy), "、".join(p.stem for p in fuzzy[:6])))
+    return fuzzy[0]
 
 
 def cmd_new(args):

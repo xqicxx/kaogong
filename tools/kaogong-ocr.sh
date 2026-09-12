@@ -90,15 +90,24 @@ JSONS=()
 FAILED=0
 t_rect=0
 t_ocr=0
+index=0
 for f in "${ARGS[@]}"; do
+  index=$((index + 1))
   [ -f "$f" ] || {
     echo "  ✗ 找不到文件：$f" >&2
     FAILED=$((FAILED + 1))
     continue
   }
-  name="$(basename "${f%.*}")"
+  # 加序号前缀：不同目录下的同名图片（a/图1.jpg 与 b/图1.jpg）否则会互相覆盖，
+  # 结果是悄悄少页或者串页
+  name="$(printf '%03d-%s' "$index" "$(basename "${f%.*}")")"
   s=$(date +%s%N)
-  "$BIN/rectify" "$f" "$TMP/$name.jpg" >/dev/null 2>"/tmp/rect-$name.err" || cp "$f" "$TMP/$name.jpg"
+  if ! "$BIN/rectify" "$f" "$TMP/$name.jpg" >/dev/null 2>"$TMP/$name-rect.err"; then
+    # 检测不到文档时 rectify 本来就该原样输出；真失败才走这个兜底，但要报出来
+    echo "  ! 矫正没成功，用原图继续：$f" >&2
+    [ -s "$TMP/$name-rect.err" ] && echo "    $(head -1 "$TMP/$name-rect.err")" >&2
+    cp "$f" "$TMP/$name.jpg"
+  fi
   t_rect=$((t_rect + ($(date +%s%N) - s) / 1000000))
   "$BIN/deink" "$TMP/$name.jpg" "$TMP/$name-clean.jpg" >/dev/null 2>&1 || cp "$TMP/$name.jpg" "$TMP/$name-clean.jpg"
   s=$(date +%s%N)

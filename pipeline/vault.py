@@ -35,6 +35,10 @@ def split(text):
         return {}, text, ""
     fm = {}
     for line in lines[1:end]:
+        # 缩进行是多行值/列表的续行，不是新的键 —— 当成键会把 desc: | 下面的内容
+        # 变成一堆莫名其妙的字段
+        if line[:1].isspace():
+            continue
         if ":" in line and not line.lstrip().startswith("#"):
             k, v = line.split(":", 1)
             fm[k.strip()] = v.strip()
@@ -63,6 +67,8 @@ def merge_front_matter(raw_fm, updates):
         if ":" not in line or line[:1].isspace():
             if skipping_continuation and line[:1].isspace():
                 continue          # 被替换键的缩进续行，一起丢掉
+            if line.strip():      # 空行/注释行不算续行，后面再遇到缩进行要保留
+                skipping_continuation = False
             out.append(line)
             continue
         k = line.split(":", 1)[0].strip()
@@ -82,6 +88,10 @@ def merge_front_matter(raw_fm, updates):
 def write(path, updates, body, raw_fm):
     """原子写：先写同目录临时文件再 os.replace，中途崩不会留下半个笔记。"""
     p = Path(path)
+    try:
+        old_mode = p.stat().st_mode & 0o777      # mkstemp 建出来是 0600，
+    except OSError:                              # 直接 replace 会把笔记权限悄悄收紧
+        old_mode = 0o644
     data = "---\n" + merge_front_matter(raw_fm, updates) + "\n---\n\n" + (body or "")
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".")
     try:
@@ -89,6 +99,7 @@ def write(path, updates, body, raw_fm):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, old_mode)
         os.replace(tmp, p)
     except BaseException:
         try:

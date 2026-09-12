@@ -182,7 +182,7 @@ def cmd_due(args):
 
 # Telegram 的 Markdown 里，卡片名带 _ * [ ] 会让整条消息 400 发不出去。
 # 名字是我们自己的数据，但用户完全可能给卡片起个带下划线的名字。
-MD_ESCAPE = str.maketrans({c: chr(92) + c for c in "_*[]()"})
+MD_ESCAPE = str.maketrans({c: chr(92) + c for c in "_*[]()" + chr(96)})
 
 
 def md_safe(value):
@@ -199,9 +199,19 @@ def build_message(limit):
             newt.append(c)
         elif st["due"] <= today:
             review.append(c)
-    review.sort(key=lambda c: c["state"]["due"])
+    # 「逾期最狠」按可提取度排，不是按日期 —— 到期最久的未必最容易忘
+    def urgency(card):
+        state = card["state"]
+        elapsed = max(0, (today - (state["last"] or today)).days)
+        return r_of(elapsed, state["s"])
+    review.sort(key=urgency)
 
+    # Telegram 单条上限 4096 字符，超了整条推不出去。留 500 字余量给尾部说明，
+    # 列不下就少列几张并注明 —— 总比一条都发不出去强。
+    budget = 3500
+    used = 0
     lines = ["📚 今天该复习 **%d** 张" % (len(review) + len(newt[:3])), ""]
+    shown_review = 0
     if review:
         lines.append("**逾期最狠（先做这些）**")
         lines.append("")
@@ -209,14 +219,27 @@ def build_message(limit):
             st = c["state"]
             late = (today - st["due"]).days
             tag = "逾期 %d 天" % late if late > 0 else "今天到期"
-            lines.append("%d. %s · %s（%s）" % (i, md_safe(c["path"].stem), md_safe(c["fm"].get("模块", "")), tag))
+            entry = "%d. %s · %s（%s）" % (i, md_safe(c["path"].stem),
+                                           md_safe(c["fm"].get("模块", "")), tag)
+            if used + len(entry) > budget:
+                break
+            lines.append(entry)
             lines.append("")
+            used += len(entry)
+            shown_review += 1
     if newt:
         lines.append("**新学（最多 3 张）**")
         lines.append("")
-        for i, c in enumerate(newt[:3], len(review[:limit]) + 1):
-            lines.append("%d. %s · %s" % (i, md_safe(c["path"].stem), md_safe(c["fm"].get("模块", ""))))
+        for i, c in enumerate(newt[:3], shown_review + 1):
+            entry = "%d. %s · %s" % (i, md_safe(c["path"].stem), md_safe(c["fm"].get("模块", "")))
+            if used + len(entry) > budget:
+                break
+            lines.append(entry)
             lines.append("")
+            used += len(entry)
+    if shown_review < len(review):
+        lines.append("…还有 %d 张没列出来，先做上面的" % (len(review) - shown_review))
+        lines.append("")
     verify = [c for c in cards
               if (c["fm"].get("状态") or "").strip() in ("变式中", "迁移中", "待保持")]
     if verify:
@@ -259,9 +282,20 @@ def send_tg(text):
                                  data=data, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.status
+            raw = resp.read().decode("utf-8", "replace")
+            status = resp.status
     except OSError as exc:                      # 网络不通 / token 失效都从这里出来
         raise SystemExit("发 Telegram 失败：%s" % exc)
+    # HTTP 200 也可能是 ok:false（Markdown 解析失败、消息过长…）。
+    # 不查这个字段的话，推送实际没发出去，编号表却已经落盘了。
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = {}
+    if not payload.get("ok"):
+        raise SystemExit("Telegram 拒收（HTTP %s）：%s"
+                         % (status, payload.get("description") or raw[:200]))
+    return status
 
 
 def cmd_push(args):
