@@ -169,7 +169,8 @@ else:
             (not module.is_noise(short_body, set()), "正文里的“第X条”不能被误删"),
         ]
         for ok, why in checks:
-            assert ok, why
+            verdict = bool(ok)
+            assert verdict, why
 
     def _heading():
         chapter = {"text": "第一章 逻辑论证之归因论证", "h": 0.03, "w": 0.5}

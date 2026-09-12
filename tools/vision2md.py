@@ -15,6 +15,18 @@ import difflib
 import json
 import re
 import sys
+
+
+def safe_int(value, default):
+    """把比例算出来的浮点取整；类型不对就退回默认值。
+
+    这些值来自页数/行数，正常不会出错，但一批 OCR 结果里混进脏数据时，
+    宁可退默认值也不要让整批转换挂掉。
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
 from collections import Counter
 from pathlib import Path
 
@@ -34,10 +46,20 @@ PAGE_NUM = re.compile(r"^第?\s*[0-9０-９一二三四五六七八九十]{1,4}\
 
 
 def load(path):
-    d = json.loads(Path(path).read_text(encoding="utf-8"))
-    lines = [l for l in d["lines"] if l["text"].strip()]
+    """读一页的 OCR JSON。读不动就报清楚是哪一步坏了 —— 原来这里裸抛，
+    一整批会带着 traceback 挂掉，看不出是哪个文件、什么原因。"""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit("读不到 OCR 结果 %s：%s" % (path, exc))
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit("OCR 结果不是合法 JSON（%s）：%s —— 上游 vision-ocr 是不是失败了？"
+                         % (path, exc))
+    lines = [l for l in parsed.get("lines", []) if l.get("text", "").strip()]
     lines.sort(key=lambda l: (l["y"], l["x"]))
-    return {"path": str(path), "seconds": d.get("seconds", 0), "lines": lines}
+    return {"path": str(path), "seconds": parsed.get("seconds", 0), "lines": lines}
 
 
 def batch_noise(pages, band=0.085, ratio=0.6, min_pages=2):
@@ -75,7 +97,8 @@ def batch_noise(pages, band=0.085, ratio=0.6, min_pages=2):
                     break
             else:
                 groups.append({"rep": t, "pages": {id(seen)}, "items": {t}})
-    need = max(min_pages, int(len(pages) * ratio))
+    page_count = max(1, len(pages))
+    need = max(min_pages, safe_int(page_count * ratio, min_pages))
     out = set()
     for g in groups:
         if len(g["pages"]) >= need:
@@ -182,7 +205,9 @@ def page_to_md(pg, noise, source, page_no, low_conf):
         return "", 0
     hs = sorted(l["h"] for l in lines)
     med_h = hs[len(hs) // 2]
-    col_w = sorted(l.get("w", 0) for l in lines)[int(len(lines) * 0.9)]
+    widths = sorted(l.get("w", 0) for l in lines)
+    width_index = safe_int(len(widths) * 0.9, len(widths) - 1)
+    col_w = widths[min(max(width_index, 0), len(widths) - 1)]     # 夹住下标，空列表也不会炸
     blocks = build_blocks(lines, med_h, col_w)
     body = []
     for b in blocks:

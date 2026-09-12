@@ -10,10 +10,37 @@
 """
 import os
 import re
+import shutil
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 DELIM = re.compile(r"^---\s*$")
+
+# 笔记的 vault 不在 git 里（也没有 Time Machine），所以流水线自己留一份写前快照。
+# 回滚：cp ~/.pi/kaogong/backup/<日期>/<文件名> "<vault>/..."
+BACKUP_DIR = Path.home() / ".pi" / "kaogong" / "backup"
+BACKUP_KEEP_DAYS = 14
+
+
+def _snapshot(path):
+    """写之前存一份原文件。同一天同一文件只存第一次（当天最早那版才是原始版）。"""
+    try:
+        if not path.exists():
+            return
+        today = date.today().isoformat()
+        dest_dir = BACKUP_DIR / today
+        dest = dest_dir / path.name
+        if dest.exists():
+            return
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest)
+        cutoff = (date.today() - timedelta(days=BACKUP_KEEP_DAYS)).isoformat()
+        for old in BACKUP_DIR.iterdir():
+            if old.is_dir() and old.name < cutoff:
+                shutil.rmtree(old, ignore_errors=True)
+    except OSError:
+        pass          # 备份失败不该挡住正常写入
 
 
 def split(text):
@@ -88,6 +115,7 @@ def merge_front_matter(raw_fm, updates):
 def write(path, updates, body, raw_fm):
     """原子写：先写同目录临时文件再 os.replace，中途崩不会留下半个笔记。"""
     p = Path(path)
+    _snapshot(p)                                 # 先留快照，坏了能回滚
     try:
         old_mode = p.stat().st_mode & 0o777      # mkstemp 建出来是 0600，
     except OSError:                              # 直接 replace 会把笔记权限悄悄收紧
