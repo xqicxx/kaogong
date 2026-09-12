@@ -189,6 +189,26 @@ def _siblings():
     assert [c["path"] for c in deferred2] == ["B"],         "没分组时相似文本也要错开：相似度 %.3f" % dedup.similarity(twin_a["body"], twin_b["body"])
 
 
+
+
+def _dedup_edges():
+    """页码是硬证据；短文本不该拿相似度说事。"""
+    from pipeline import dedup
+    page_two = "第2页 " + "甲" * 40
+    page_three = "第3页 " + "甲" * 40
+    assert not dedup.is_same_page(page_two, page_three),         "页码明确不同（且文字没到几乎一样）时不能判为同一页"
+
+    long_same = "第2页 " + "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。" * 3
+    assert dedup.is_same_page(long_same, long_same.replace("第2页", "第！页")),         "页码被 OCR 读错、但文字几乎一致，仍应判为同一页"
+
+    short = [{"body": "完全不同的内容 A"}, {"body": "完全不同的内容 B"}]
+    _kept, deferred = dedup.split_siblings(short, lambda c: c["body"])
+    assert not deferred, "太短的正文不该由相似度触发错开"
+
+    assert dedup.page_label("第 12 页") == "12" and dedup.page_label("没有页码") == ""
+
+
+check("去重边界", _dedup_edges)
 check("页面去重", _page_dedup)
 check("近义错开", _siblings)
 

@@ -18,7 +18,11 @@ CJK = re.compile(r"[\u4e00-\u9fff]")
 
 DEFAULT_THRESHOLD = 0.45      # 实测：同页重拍 ≈ 0.61，相邻页 ≈ 0.04 —— 中间大片空白区
 PAGE_LABEL_THRESHOLD = 0.25   # 页脚页码相同时放宽：重拍糊得厉害也可能只有 0.3
-SIBLING_THRESHOLD = 0.5       # 卡片之间：超过它算“近义兄弟”，排期时要错开。
+STRONG_THRESHOLD = 0.85      # 高到可以无视页码不一致（那种情况只可能是页码被 OCR 读错）
+SIBLING_MIN_CHARS = 20        # 文本兜底要求正文至少这么长 —— 太短的文本相似度没有意义
+                              # （真实卡片正文 30-80 字，短于 20 字的相似度基本是噪声）
+SIBLING_THRESHOLD = 0.30      # 卡片之间：超过它算“近义兄弟”，排期时要错开。
+                              # 主判据是「分组」字段；文本只是兜底（实测同组 0.13-0.30）
 # ⚠️ 卡片**不做去重**：兄弟条目（同一组①②③用同一套措辞）相似度天然就高，
 # 实测「因果倒置 ↔ 否定此因」0.61、「支持原观点或质疑反对者 ↔ 支持反对者或质疑原观点」0.77。
 # 它们是完全不同的知识点，合并或删除就是丢内容 —— 只能错开排期，不能当重复处理。
@@ -73,7 +77,12 @@ def split_siblings(cards, text_of, already=(), threshold=SIBLING_THRESHOLD, grou
         if group:
             same_group = any(((group_of(other) if group_of else "") or "") == group
                              for other in picked)
-        similar = any(similarity(text_of(card), text_of(other)) >= threshold for other in picked)
+        body = text_of(card)
+        similar = False
+        if len(normalize(body)) >= SIBLING_MIN_CHARS:
+            similar = any(len(normalize(text_of(other))) >= SIBLING_MIN_CHARS
+                          and similarity(body, text_of(other)) >= threshold
+                          for other in picked)
         if same_group or similar:
             deferred.append(card)
         else:
@@ -82,11 +91,20 @@ def split_siblings(cards, text_of, already=(), threshold=SIBLING_THRESHOLD, grou
 
 
 def is_same_page(left, right, threshold=DEFAULT_THRESHOLD):
-    """同一页的判据：文字够像，或者「页码相同 + 文字有一定相似」。"""
+    """同一页的判据。
+
+    三条，按优先级：
+      1. 两个页脚的页码明确不同 且 文字也没到「几乎一样」→ **不是同一页**
+         （页码是硬证据；只有 OCR 把页码读错了才会出现「同页不同号」）
+      2. 文字相似度 >= threshold → 是同一页
+      3. 页码相同 + 相似度 >= PAGE_LABEL_THRESHOLD → 是同一页（重拍糊了的旁证）
+    """
     score = similarity(left, right)
+    left_label, right_label = page_label(left), page_label(right)
+    if left_label and right_label and left_label != right_label and score < STRONG_THRESHOLD:
+        return False
     if score >= threshold:
         return True
-    left_label, right_label = page_label(left), page_label(right)
     return bool(left_label) and left_label == right_label and score >= PAGE_LABEL_THRESHOLD
 
 
