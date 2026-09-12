@@ -3,6 +3,8 @@
 
 只负责“把卡片读出来 / 找到某一张 / 把状态写回去”，不掺 CLI 与排期算法。
 """
+# 卡片 I/O 层：只负责“读出来 / 找到某一张 / 把状态写回”，
+# 不掺 CLI、不掺排期算法。review 与 mistake 都走这里。
 import json
 from datetime import date, datetime
 

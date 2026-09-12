@@ -21,6 +21,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.cards import all_cards, by_index, find, save_state, state_fields  # type: ignore[import]  # noqa: E402
+from pipeline.dedup import split_siblings  # type: ignore[import]  # noqa: E402
 from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 from pipeline.fsrs import FIRST_INTERVAL_DAYS, r_of, schedule  # type: ignore[import]  # noqa: E402
 from pipeline.notify import SAFE_LENGTH, send  # type: ignore[import]  # noqa: E402
@@ -55,6 +56,17 @@ def build_message(limit, today=None):
             due.append(card)
     # “逾期最狠”按可提取度排，不是按日期 —— 到期最久的未必最容易忘
     due.sort(key=lambda card: r_of(_elapsed(card, today), card["state"]["s"]))
+
+    # 语义错开（LECTOR 2025 的发现）：同批里别放近义考点。
+    # 例：「因果倒置」与「否定此因」文字相似度 0.61 —— 它们不是重复，
+    # 是同一组的兄弟条目；放一起会“记混”而不是“忘记”。今天先放过其中一个。
+    # 注意：这里只错开排期，**绝不合并或删除卡片** —— 删了就是丢知识点。
+    body_of = lambda card: card["body"] or ""
+    group_of = lambda card: (card["fm"].get("分组") or "").strip()
+    due, deferred = split_siblings(due, body_of, group_of=group_of)
+    # 新学也要错开：同一天引入两个近义考点，效果和“一起复习”一样糟
+    fresh, fresh_deferred = split_siblings(fresh, body_of, already=due, group_of=group_of)
+    deferred += fresh_deferred
     pending = [card for card in everything
                if (card["fm"].get("状态") or "").strip() in ("变式中", "迁移中", "待保持")]
 
@@ -84,6 +96,9 @@ def build_message(limit, today=None):
             used += len(entry)
     if shown_review < len(due):
         lines += ["…还有 %d 张没列出来，先做上面的" % (len(due) - shown_review), ""]
+    if deferred:
+        lines += ["（为防混淆，今日暂缓 %d 张近义考点：%s）"
+                  % (len(deferred), "、".join(md_safe(c["path"].stem) for c in deferred[:3])), ""]
     if pending:
         lines += ["**🧪 待验证（掌握三关）**", ""]
         for card in pending[:5]:
@@ -161,9 +176,9 @@ def cmd_reset(args):
     count = 0
     for card in all_cards():
         planned = schedule(None, 3)
+        # 一次写两类字段：掌握状态（clear）与排期状态（state_fields）
         updates = dict(cleared)
-        for key, value in state_fields(dict(planned, reps=0, last=None)).items():
-            updates[key] = value
+        updates.update(state_fields(dict(planned, reps=0, last=None)))
         write(card["path"], updates, card["body"], card["raw"])
         count += 1
     print("  已重置 %d 张卡（状态/排期/掌握字段回到出厂，首轮 %.0f 天）"

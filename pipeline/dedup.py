@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""页面去重 —— 纯函数，不碰文件系统。
+
+为什么要它：同一页讲义会被拍好几次（换角度、补拍、手抖重拍）。
+不去重就会出现重复的页 → 重复的卡片 → 同一个考点被排期多次，
+复习负担翻倍、并且“两张卡”互相干扰。
+
+判据用字符 3-gram 的 Jaccard 相似度，不用整串哈希：
+  · 同一页两次拍摄 OCR 结果会有细微差异（标点、个别字），哈希对不上
+  · 换角度拍还会让页眉页脚的行序略有不同
+3-gram 对这类噪声鲁棒，而且不需要任何依赖。
+"""
+import re
+
+# 正文归一：只留中日韩与字母数字，丢掉空白、标点、水印式符号
+NOISE = re.compile(r"[^\u4e00-\u9fff\u3040-\u30ffA-Za-z0-9]")
+CJK = re.compile(r"[\u4e00-\u9fff]")
+
+DEFAULT_THRESHOLD = 0.45      # 实测：同页重拍 ≈ 0.61，相邻页 ≈ 0.04 —— 中间大片空白区
+PAGE_LABEL_THRESHOLD = 0.25   # 页脚页码相同时放宽：重拍糊得厉害也可能只有 0.3
+SIBLING_THRESHOLD = 0.5       # 卡片之间：超过它算“近义兄弟”，排期时要错开。
+# ⚠️ 卡片**不做去重**：兄弟条目（同一组①②③用同一套措辞）相似度天然就高，
+# 实测「因果倒置 ↔ 否定此因」0.61、「支持原观点或质疑反对者 ↔ 支持反对者或质疑原观点」0.77。
+# 它们是完全不同的知识点，合并或删除就是丢内容 —— 只能错开排期，不能当重复处理。
+
+
+def normalize(text):
+    return NOISE.sub("", text or "")
+
+
+def shingles(text, size=3):
+    """字符 size-gram 集合。中文按字切，正好对上“一段话大体相同”的直觉。"""
+    body = normalize(text)
+    if len(body) <= size:
+        return {body} if body else set()
+    return {body[i:i + size] for i in range(len(body) - size + 1)}
+
+
+def similarity(left, right):
+    """两段文本的相似度 0..1（3-gram Jaccard）。太短的文本按长度比给个保守值。"""
+    first, second = shingles(left), shingles(right)
+    if not first or not second:
+        return 0.0
+    if len(first) < 8 or len(second) < 8:      # 行数太少时 Jaccard 不稳
+        return min(len(first), len(second)) / max(len(first), len(second))
+    return len(first & second) / len(first | second)
+
+
+
+PAGE_LABEL = re.compile(r"第\s*([0-9０-９一二三四五六七八九十]{1,3})\s*[页頁]")
+
+
+def page_label(text):
+    """抠出页脚里的「第N页」—— 给去重再加一道独立旁证。"""
+    found = PAGE_LABEL.findall(text or "")
+    return found[-1] if found else ""
+
+
+def split_siblings(cards, text_of, already=(), threshold=SIBLING_THRESHOLD, group_of=None):
+    """把卡片分成「本批可做」与「因近义暂缓」两组。
+
+    主判据是**分组**：同一分组里的条目本来就是同一套措辞的并列项
+    （「三种削弱方式」下的 另有他因 / 因果倒置 / 否定此因），放同一天最容易记混。
+    没有分组信息时才退到文本相似度。
+
+    ⚠️ 只影响排期，**绝不合并或删除卡片** —— 删了就是丢知识点。
+    """
+    picked = list(already)
+    deferred = []
+    for card in cards:
+        group = (group_of(card) if group_of else "") or ""
+        same_group = False
+        if group:
+            same_group = any(((group_of(other) if group_of else "") or "") == group
+                             for other in picked)
+        similar = any(similarity(text_of(card), text_of(other)) >= threshold for other in picked)
+        if same_group or similar:
+            deferred.append(card)
+        else:
+            picked.append(card)
+    return picked[len(already):], deferred
+
+
+def is_same_page(left, right, threshold=DEFAULT_THRESHOLD):
+    """同一页的判据：文字够像，或者「页码相同 + 文字有一定相似」。"""
+    score = similarity(left, right)
+    if score >= threshold:
+        return True
+    left_label, right_label = page_label(left), page_label(right)
+    return bool(left_label) and left_label == right_label and score >= PAGE_LABEL_THRESHOLD
+
+
+def find_match(candidate_text, existing, threshold=DEFAULT_THRESHOLD):
+    """在 existing（[(名字, 文本)]）里找与候选页最像的一页。
+
+    返回 (名字, 相似度) 或 None。CJK 字数差太多时直接跳过比较，省时间也避免误判。
+    """
+    target = len(CJK.findall(candidate_text))
+    best = None
+    for name, text in existing:
+        size = len(CJK.findall(text))
+        if target and size and (max(target, size) / max(1, min(target, size))) > 1.6:
+            continue                           # 长度差一倍半以上，不可能同页
+        score = similarity(candidate_text, text)
+        if best is None or score > best[1]:
+            best = (name, score, text)
+    if best is None:
+        return None
+    # 用同一个判据复核（相似度阈值 + 页码旁证），而不是只看谁分高
+    if is_same_page(candidate_text, best[2], threshold):
+        return (best[0], best[1])
+    return None

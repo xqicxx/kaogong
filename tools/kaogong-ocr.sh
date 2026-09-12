@@ -12,6 +12,7 @@ SOURCE="未命名讲义"
 MODULE="_inbox"
 START=1
 KEEP_TMP=""
+DEDUP=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +42,10 @@ while [ $# -gt 0 ]; do
     ;;
   --keep-tmp)
     KEEP_TMP=1
+    shift
+    ;;
+  --no-dedup)
+    DEDUP="--no-dedup"
     shift
     ;;
   -h | --help)
@@ -130,5 +135,5 @@ fi
 
 echo "  源: $SOURCE   模块: $MODULE   成功 ${#JSONS[@]} 张"
 echo "  矫正 ${t_rect}ms  OCR ${t_ocr}ms"
-python3 "$BIN/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" "${JSONS[@]}"
+python3 "$BIN/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" $DEDUP "${JSONS[@]}"
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"

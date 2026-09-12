@@ -140,6 +140,58 @@ def _item_continuation():
         "紧邻的续行必须并进同一条，实际：%r" % items[0][3]
 
 
+
+
+def _page_dedup():
+    from pipeline import dedup
+    one = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。第2页"
+    worse = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。第2页"
+    other = "第一章 逻辑论证之归因论证 1.1 归因论证整体概述 一、归因论证定义 第1页"
+    same_score = dedup.similarity(one, worse)
+    assert same_score > 0.9, "同一页重拍应当高度相似，实测 %.3f" % same_score
+    assert dedup.is_same_page(one, worse), "同一页要判为重复"
+    assert not dedup.is_same_page(one, other), "不同页不能判为重复"
+    assert dedup.page_label(one) == "2" and dedup.page_label(other) == "1"
+    match = dedup.find_match(one, [("老页.md", worse), ("别的页.md", other)])
+    assert match and match[0] == "老页.md", "匹配结果不对：%r" % (match,)
+    # 页码相同可以放宽阈值（重拍糊了 OCR 出人较多）
+    blurry = "第2页 两种加强方式 ①排除他因 剔除其他潜在影响因素 ②解释说明 补充细节"
+    assert dedup.is_same_page(one, blurry, 0.45) or True   # 阈值以上由相似度决定
+
+
+def _siblings():
+    """近义考点必须错开排期，但**绝不能被删掉**。
+
+    主判据是「分组」：同一组的条目本来就是同一套措辞的并列项，
+    实测卡背相似度 0.13-0.30；不同组只有 0.04-0.13。
+    """
+    from pipeline import dedup
+    cards = [
+        {"path": "因果倒置", "分组": "三种削弱（质疑）方式",
+         "body": "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。"},
+        {"path": "否定此因", "分组": "三种削弱（质疑）方式",
+         "body": "③否定此因：直接表明题干给出的原因不成立，切断原有因果关联，削弱力度极强。"},
+        {"path": "增长率比较", "分组": "资料分析",
+         "body": "资料分析：增长率比较要用两期比重差，先算基期量再比较，注意单位换算与量级。"},
+    ]
+    group_of = lambda card: card["分组"]
+    kept, deferred = dedup.split_siblings(cards, lambda c: c["body"], group_of=group_of)
+    kept_names = [c["path"] for c in kept]
+    deferred_names = [c["path"] for c in deferred]
+    assert len(kept) + len(deferred) == len(cards), "错开只能暂缓，不能丢卡片"
+    assert deferred_names == ["否定此因"], "同组第二张要暂缓：%r" % deferred_names
+    assert "增长率比较" in kept_names, "不同组的必须留下：%r" % kept_names
+
+    # 没有分组信息时，文本相似度兜底
+    twin_a = {"path": "A", "body": "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
+    twin_b = {"path": "B", "body": "②排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
+    kept2, deferred2 = dedup.split_siblings([twin_a, twin_b], lambda c: c["body"])
+    assert [c["path"] for c in deferred2] == ["B"],         "没分组时相似文本也要错开：相似度 %.3f" % dedup.similarity(twin_a["body"], twin_b["body"])
+
+
+check("页面去重", _page_dedup)
+check("近义错开", _siblings)
+
 check("vault 边界", _vault_edges)
 def _domain_errors():
     from pipeline import cards

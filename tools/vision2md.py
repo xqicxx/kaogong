@@ -13,8 +13,14 @@ Vision 只给「文本行 + 坐标 + 置信度」，没有版面语义，所以�
 import argparse
 import difflib
 import json
+import os
 import re
 import sys
+
+# 必须用 realpath：~/.pi/bin/vision2md.py 是指向仓库的软链，
+# abspath 不跟随软链，会算出 ~/.pi 而不是仓库根
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from pipeline import dedup  # type: ignore[import]  # noqa: E402
 
 
 def safe_int(value, default):
@@ -241,6 +247,44 @@ def page_to_md(pg, noise, source, page_no, low_conf):
     return out, chars
 
 
+def page_text(page):
+    """把一页的行拼成用于比较的文本。"""
+    return "\n".join(line["text"] for line in page["lines"])
+
+
+def existing_pages(out_dir):
+    """已经处理过的页（同一模块的 _raw 目录）—— 用于跨次运行去重。"""
+    import json as _json
+    from pathlib import Path
+    found = []
+    for md in sorted(Path(out_dir).glob("*.md")) if Path(out_dir).exists() else []:
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        found.append((md.name, text))
+    return found
+
+
+def dedup_pages(pages, out_dir, threshold):
+    """批内去重 + 跨次运行去重。返回 (保留的页, [(被丢的, 原因)])。"""
+    kept, dropped = [], []
+    for page in pages:
+        text = page_text(page)
+        name = Path(page["path"]).name
+        earlier = dedup.find_match(text, [(p["path"], page_text(p)) for p in kept], threshold)
+        if earlier:
+            dropped.append((name, "批内重复：与 %s 是同一页（相似度 %.2f）"
+                            % (Path(earlier[0]).name, earlier[1])))
+            continue
+        before = dedup.find_match(text, existing_pages(out_dir), threshold)
+        if before:
+            dropped.append((name, "已处理过：与 %s 是同一页（相似度 %.2f）" % (before[0], before[1])))
+            continue
+        kept.append(page)
+    return kept, dropped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("jsons", nargs="+")
@@ -251,9 +295,18 @@ def main():
     # Vision 的置信度是双峰分布（0.5 / 1.0），0.55 会误标一半的行；
     # 0.4 以下才是真的没底。整体"犹豫程度"放到 front-matter 的 ocr_uncertain 里做页级指标
     ap.add_argument("--low-conf", type=float, default=0.40)
+    ap.add_argument("--no-dedup", action="store_true", help="关掉页面去重")
+    ap.add_argument("--dedup-threshold", type=float, default=dedup.DEFAULT_THRESHOLD)
     args = ap.parse_args()
 
     pages = [load(p) for p in args.jsons]
+    dropped = []
+    if not args.no_dedup:
+        pages, dropped = dedup_pages(pages, args.out_dir, args.dedup_threshold)
+        for name, why in dropped:
+            print("  跳过 %s —— %s" % (name, why), file=sys.stderr)
+        if not pages:
+            print("  全部是重复页，没有新内容需要写", file=sys.stderr)
     noise = batch_noise(pages)
     total = 0
     for i, pg in enumerate(pages):
