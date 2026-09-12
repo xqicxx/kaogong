@@ -151,7 +151,7 @@ def cmd_new(args):
     fm = {
         "type": "错题", "科目": args.subject, "模块": args.module,
         "知识点": "[%s]" % ", ".join('"%s"' % p for p in points) if points else "[]",
-        "来源": args.source or "", "日期": str(date.today()),
+        "来源": vault.yaml_value(args.source or ""), "日期": str(date.today()),
         "我的答案": args.mine or "", "正确答案": args.correct or "",
         "答题信心": args.confidence, "错因": args.cause,
         "状态": "待巩固",
@@ -252,6 +252,11 @@ def cmd_link(args):
                 print("    %s" % line[:110])
         else:
             print("    （qmd 没返回结果）")
+        if out.returncode != 0:
+            # 非零退出时 stdout 可能是空的，别让人以为“真的没结果”
+            detail = (out.stderr or "").strip().splitlines()
+            print("    qmd 退出码 %s%s" % (out.returncode,
+                                        ("：" + detail[0]) if detail else ""))
         if "No results" in text:
             print("    没搜到 —— 新写的笔记可能还没进索引，跑一下 qmd update")
     except (OSError, subprocess.SubprocessError) as exc:

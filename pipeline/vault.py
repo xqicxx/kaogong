@@ -137,6 +137,21 @@ def write(path, updates, body, raw_fm):
         raise
 
 
+def yaml_value(value):
+    """需要时给值加引号。
+
+    值里带冒号、井号或首尾空格的话，写进 front-matter 会解析坏
+    （题干摘要、来源这类字段完全可能出现“第 3 题：xxx”）。
+    """
+    text = str(value)
+    quote = chr(34)
+    escape = chr(92) + quote
+    needs = (text == "" or text != text.strip()
+             or ":" in text or "#" in text or quote in text
+             or text[0] in "-?*&!|>%@`")
+    return quote + text.replace(quote, escape) + quote if needs else text
+
+
 def safe_int(v, default=0):
     try:
         return int(v)
@@ -187,6 +202,13 @@ def selftest():
     ok10 = "第一行" not in out_m and "desc: 单行" in out_m
     assert ok10, "多行值改写后不该留残行：%s" % out_m.replace("\n", " / ")
     ok11 = merge_front_matter(None, {"a": "1"}) == "a: 1"
+    quote = chr(34)
+    # 半角冒号会切断 front-matter；全角不用管（解析按半角切）
+    sample = "第 3 题: 另有他因"
+    ok12 = yaml_value(sample) == quote + sample + quote
+    assert ok12, "带半角冒号的值要加引号：%r" % yaml_value(sample)
+    ok13 = yaml_value("普通值") == "普通值" and yaml_value("第 3 题：另有他因").startswith("第")
+    assert ok13, "普通值不该加引号"
     assert ok11, "raw_fm 为 None 也不能崩"
     print("  自检通过：11 项（原子写 / 精确分隔符 / 缺头不崩 / 往返不膨胀 / 多行值清残行）")
 
