@@ -180,11 +180,20 @@ def cmd_due(args):
             c["path"].stem, st["due"], (today - st["due"]).days, r_of(elapsed, st["s"])))
 
 
+# Telegram 的 Markdown 里，卡片名带 _ * [ ] 会让整条消息 400 发不出去。
+# 名字是我们自己的数据，但用户完全可能给卡片起个带下划线的名字。
+MD_ESCAPE = str.maketrans({c: chr(92) + c for c in "_*[]()"})
+
+
+def md_safe(value):
+    return str(value).translate(MD_ESCAPE)
+
+
 def build_message(limit):
-    d = due_cards()
     today = date.today()
+    cards = all_cards()          # 整个 vault 只扫一次（原来扫了三遍）
     newt, review = [], []
-    for c in all_cards():
+    for c in cards:
         st = c["state"]
         if not st or st["reps"] == 0:
             newt.append(c)
@@ -200,15 +209,15 @@ def build_message(limit):
             st = c["state"]
             late = (today - st["due"]).days
             tag = "逾期 %d 天" % late if late > 0 else "今天到期"
-            lines.append("%d. %s · %s（%s）" % (i, c["path"].stem, c["fm"].get("模块", ""), tag))
+            lines.append("%d. %s · %s（%s）" % (i, md_safe(c["path"].stem), md_safe(c["fm"].get("模块", "")), tag))
             lines.append("")
     if newt:
         lines.append("**新学（最多 3 张）**")
         lines.append("")
         for i, c in enumerate(newt[:3], len(review[:limit]) + 1):
-            lines.append("%d. %s · %s" % (i, c["path"].stem, c["fm"].get("模块", "")))
+            lines.append("%d. %s · %s" % (i, md_safe(c["path"].stem), md_safe(c["fm"].get("模块", ""))))
             lines.append("")
-    verify = [c for c in all_cards()
+    verify = [c for c in cards
               if (c["fm"].get("状态") or "").strip() in ("变式中", "迁移中", "待保持")]
     if verify:
         lines.append("**🧪 待验证（掌握三关）**")
@@ -217,7 +226,7 @@ def build_message(limit):
             s = (c["fm"].get("状态") or "").strip()
             keep = c["fm"].get("保持测试") or ""
             tail = "　保持测试 %s" % keep if s == "待保持" and keep else ""
-            lines.append("• %s　[%s]%s" % (c["path"].stem, s, tail))
+            lines.append("• %s　[%s]%s" % (md_safe(c["path"].stem), s, tail))
             lines.append("")
     lines.append("---")
     lines.append("")
@@ -261,11 +270,14 @@ def cmd_push(args):
         print(msg)
         print("\n  （dry run，未发送；本次会推 %d 张）" % len(cards))
         return
+    # 先发再存编号表：反过来的话，发送失败也会留下“已推送”的记录，
+    # 之后按编号回分就会对到用户根本没看到的卡片
+    status = send_tg(msg)
     PUSH_STATE.parent.mkdir(parents=True, exist_ok=True)
     PUSH_STATE.write_text(json.dumps(
         {"date": str(date.today()), "cards": [c["path"].stem for c in cards]},
         ensure_ascii=False, indent=1), encoding="utf-8")
-    print("  发送退出码 %s（%d 张，编号表已存 %s）" % (send_tg(msg), len(cards), PUSH_STATE))
+    print("  发送退出码 %s（%d 张，编号表已存 %s）" % (status, len(cards), PUSH_STATE))
 
 
 def resolve_card(spec):
@@ -281,6 +293,10 @@ def resolve_card(spec):
             saved = json.loads(PUSH_STATE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raise SystemExit("读不到上次推送的编号表（%s），请用卡片名" % PUSH_STATE)
+        if str(saved.get("date")) != str(date.today()):
+            # 昨天的编号今天含义不同，照着改会改错卡
+            raise SystemExit("编号表是 %s 推的，不是今天 —— 用卡片名，或先跑一次 push"
+                             % saved.get("date"))
         names = saved.get("cards") or []
         try:
             i = int(spec) - 1
