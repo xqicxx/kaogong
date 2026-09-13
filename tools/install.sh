@@ -30,7 +30,7 @@ for tool in rectify vision-ocr deink crop; do
       echo "  ✓ $tool"
     else
       echo "  ✗ $tool 编译成功但运行不对（无参时该 exit 1，实际 $code）" >&2
-      failed=$(( failed + 1 ))
+      failed=$((failed + 1))
     fi
   else
     echo "  ✗ $tool 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2
