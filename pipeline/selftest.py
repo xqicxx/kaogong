@@ -16,6 +16,12 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# 约定：
+#   · 用例函数定义在 main() 内部（共享 CHECKS/FAILURES 计数器），调用紧跟在定义之后
+#   · 断言的失败消息先算成变量再 assert（下面那种 "msg" % (a, b) 的写法会被静态检查
+#     误读成 assert 的元组字面量）
+#   · 检查数少于 MIN_CHECKS 一律算失败 —— 套件曾被缩进错误静默截断过
+#
 # 这套自检靠 assert 表达不变量，而 python -O 会把 assert 全剥掉 —— 那就成了空跑
 if not __debug__:
     print("自检依赖 assert，不能用 python -O 运行", file=sys.stderr)

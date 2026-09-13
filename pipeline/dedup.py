@@ -57,13 +57,26 @@ def similarity(left, right):
 
 
 
+# 页码归一：OCR 会把 5 读成 ５ 或 五，直接相等比会漏掉同页
+CHINESE_DIGITS = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+                  "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
+
+
+def normalize_page_label(value):
+    """第５页 / 第五页 / 第5页 都归一成 5。"""
+    text = str(value or "").strip()
+    for chinese, arabic in CHINESE_DIGITS.items():
+        text = text.replace(chinese, arabic)
+    return text.translate({ord("０") + i: ord("0") + i for i in range(10)})
+
+
 PAGE_LABEL = re.compile(r"第\s*([0-9０-９一二三四五六七八九十]{1,3})\s*[页頁]")
 
 
 def page_label(text):
     """抠出页脚里的「第N页」—— 给去重再加一道独立旁证。"""
     found = PAGE_LABEL.findall(text or "")
-    return found[-1] if found else ""
+    return normalize_page_label(found[-1]) if found else ""
 
 
 def split_siblings(cards, text_of, already=(), threshold=SIBLING_THRESHOLD, group_of=None):

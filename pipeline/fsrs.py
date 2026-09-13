@@ -45,6 +45,23 @@ MIN_STABILITY = 0.1
 MAX_STABILITY = 36500.0
 
 
+def safe_number(value, default):
+    """把卡片里的数值字段转成 float；缺失/非法/NaN/无限就退回默认值。"""
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def safe_count(value, default=0):
+    """把复习次数转成 int；NaN/inf 会让 int() 抛错。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def r_of(elapsed_days, stability):
     """t 天后的可提取度。"""
     return (1 + FACTOR * max(elapsed_days, 0) / max(stability, MIN_STABILITY)) ** DECAY
@@ -72,9 +89,11 @@ def schedule(state, grade, today=None):
         reps = 1
         retrievability = DEFAULT_REQUEST_RETENTION
     else:
-        stability = state["s"]
-        difficulty = state["d"]
-        reps = state["reps"]
+        # 卡片字段可能被手改坏：s<=0 会让下面的 s**-w9 变成除零，缺字段会 KeyError。
+        # 先夹到合法区间、缺的取默认值，坏数据不该让整条复习链路崩掉。
+        stability = clamp_stability(safe_number(state.get("s"), W_ANCHORED[grade - 1]))
+        difficulty = min(max(safe_number(state.get("d"), W[4]), 1), 10)
+        reps = safe_count(safe_number(state.get("reps"), 0))
         elapsed = max(0, (today - state["last"]).days) if state.get("last") else 0
         retrievability = r_of(elapsed, stability)
         base = min(max(W[4] - (4 - 3) * W[5], 1), 10)

@@ -130,6 +130,10 @@ def _render(value):
     first = stripped[:1]
     if len(stripped) >= 2 and first == stripped[-1:] and first in (chr(34), chr(39)):
         return text
+    if "\n" in text or "\r" in text:
+        # 换行必须引起来并被 yaml_value 转义：否则值会被写成一堆“幽灵键”，
+        # 把 front-matter 从中间切碎（下一次读就多出一堆不存在的字段）
+        return yaml_value(text)
     return yaml_value(text)
 
 
@@ -165,6 +169,9 @@ def yaml_value(value):
     （题干摘要、来源这类字段完全可能出现“第 3 题：xxx”）。
     """
     text = str(value)
+    # front-matter 的值必须是单行：换行会把值写成“幽灵键”，把解析切碎。
+    # 元数据（来源/题干摘要）里的换行没有意义，压成空格。
+    text = re.sub(r"[\r\n]+", " ", text).strip()
     quote = chr(34)
     if len(text) >= 2 and text[0] == quote and text[-1] == quote:
         return text                      # 已经引过就不再套一层

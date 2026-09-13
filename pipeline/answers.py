@@ -53,8 +53,16 @@ def judge(student, correct):
     mine, key = normalize(student), normalize(correct)
     if not mine or not key:
         return UNKNOWN
+    # 长散文不算作答：「根据《刑法》第A条」不该被判成选了 A
+    # 上限取 8：手写作答通常是「选B」「答案是B」；超过 8 个字的多半是散文
+    # （「根据《刑法》第A条的规定」），从散文里抠一个字母当答案会误判
+    if len(str(student or "").strip()) > 8:
+        return UNKNOWN
     if mine == key:
         return RIGHT
+    # 纯数字答案按字符串比：12 与 21 是不同答案，不能当集合看
+    if mine.isdigit() and key.isdigit():
+        return WRONG
     if len(key) > 1 and len(mine) > 1 and set(mine) == set(key):
         return RIGHT
     return WRONG
