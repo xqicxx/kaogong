@@ -615,6 +615,24 @@ def main():
     check("CLI 错误边界", _cli_error_boundary)
 
 
+    def _verify_accepts_both_kinds():
+        # 冒烟测试抓到的：verify 只认考点卡，指向错题卡会报「没找到卡片」。
+        # 而错题卡同样带那四个字段，三关对哪类都成立 —— 更糟的是，
+        # 错题卡的「状态」字段于是永远不变，`list --stage 变式中` 变成死筛选。
+        # 这条用例不依赖库里有什么卡：只验找不到时的行为。
+        missing = "根本不存在的卡xyz"
+        expect_raises(errors.CardNotFound, lambda: mistake._find_any(missing),
+                      "找不到时要抛 CardNotFound")
+        try:
+            mistake._find_any(missing)
+        except errors.CardNotFound as exc:
+            msg = "找不到时的提示要点明「考点和错题」两类，实际：%s" % exc
+            assert "考点" in str(exc) and "错题" in str(exc), msg
+
+
+    check("verify 认两类卡", _verify_accepts_both_kinds)
+
+
     def _stage_resolution():
         # 用户输入的非法状态必须报错，不能静默当「未掌握」。
         # 踩过：校验写在过滤循环体里，库为空时循环一次都不跑 → 非法值被当成「0 道」。

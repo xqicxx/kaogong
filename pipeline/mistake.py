@@ -113,8 +113,29 @@ def cmd_new(args):
               "（纠正效果最好，但一周后会复发 → 间隔要更短、多轮复测）")
 
 
+def _find_any(name):
+    """按名字找卡：**考点和错题都认**。
+
+    两目录的卡片都带「状态 / 变式连胜 / 迁移通过 / 保持测试」四个字段，三关对哪类都成立。
+    以前这里只调 cards.find()（只搜考点目录），于是：
+      · 指向错题卡会报「没找到卡片」，而用户根本不知道要找的是哪类卡
+      · 错题卡自己的「状态」字段永远不变 → `list --stage 变式中` 永远是 0 道（死筛选）
+    找不到时把两个目录都点出来，别让人猜。
+    """
+    try:
+        return find(name)
+    except (CardNotFound, AmbiguousCard):
+        pass
+    try:
+        path, fm, body = _read_card(name)
+    except KaogongError:
+        raise CardNotFound("考点和错题里都没有「%s」—— verify 只能指向这两类卡" % name)
+    _fm, _body, raw = read(path)
+    return {"path": path, "fm": fm, "body": body, "raw": raw}
+
+
 def cmd_verify(args):
-    card = find(args.card)
+    card = _find_any(args.card)
     stability = safe_float(card["fm"].get("稳定度"), 12.0)
     before = normalize(card["fm"].get("状态"))
     # advance() 现在自己就抛 InvalidState（领域异常），这里不用再包一层
