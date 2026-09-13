@@ -13,6 +13,8 @@ MODULE="_inbox"
 START=1
 KEEP_TMP=""
 DEDUP=""
+WITH_MARKS=""
+WITH_MARKS=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,6 +48,11 @@ while [ $# -gt 0 ]; do
     ;;
   --no-dedup)
     DEDUP="--no-dedup"
+    shift
+    ;;
+  --with-marks)
+    # 额外产出红笔层图与红笔层文字（判对错、推错因的依据）
+    WITH_MARKS=1
     shift
     ;;
   -h | --help)
@@ -129,6 +136,12 @@ for f in "${ARGS[@]}"; do
     FAILED=$((FAILED + 1))
   fi
   t_ocr=$((t_ocr + ($(date +%s%N) - s) / 1000000))
+  if [ -n "$WITH_MARKS" ]; then
+    # 红笔层：把手写批注单独抠出来。印刷体留给 OCR，手写体留给我判
+    if "$BIN/deink" "$TMP/$name.jpg" "$TMP/$name-marks.jpg" --red-only >/dev/null 2>&1; then
+      "$BIN/vision-ocr" "$TMP/$name-marks.jpg" > "$TMP/$name-marks.txt" 2>/dev/null || true
+    fi
+  fi
 done
 
 if [ ${#JSONS[@]} -eq 0 ]; then
@@ -142,6 +155,15 @@ echo "  矫正 ${t_rect}ms  OCR ${t_ocr}ms"
 if ! python3 "$BIN/vision2md.py" --source "$SOURCE_SAFE" --out-dir "$OUT" --start-page "$START" $DEDUP "${JSONS[@]}"; then
   echo "  ✗ 版面转换失败（vision2md），产物可能不完整" >&2
   exit 6
+fi
+
+# 红笔层产物放在成功分支之后 —— 之前误插进失败分支，只有报错时才拷贝
+if [ -n "$WITH_MARKS" ]; then
+  mkdir -p "$OUT/marks"
+  for extra in "$TMP"/*-marks.jpg "$TMP"/*-marks.txt; do
+    [ -f "$extra" ] && cp "$extra" "$OUT/marks/"
+  done
+  echo "  红笔层 → $OUT/marks/"
 fi
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
 # 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
