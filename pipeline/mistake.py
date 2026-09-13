@@ -16,16 +16,18 @@
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
 from datetime import date
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.cards import all_cards, find  # type: ignore[import]  # noqa: E402
 from pipeline.errors import (  # type: ignore[import]  # noqa: E402
     AmbiguousCard, CardNotFound, InvalidState, KaogongError)
-from pipeline.mastery import STEPS, advance, from_card, normalize, to_card  # type: ignore[import]  # noqa: E402
+from pipeline.mastery import STEPS, advance, from_card, normalize, resolve, to_card  # type: ignore[import]  # noqa: E402
 from pipeline.paths import MISTAKE_DIR, VAULT_ROOT  # type: ignore[import]  # noqa: E402
 from pipeline.vault import read, safe_float, write, yaml_value  # type: ignore[import]  # noqa: E402
 
@@ -91,7 +93,7 @@ def cmd_new(args):
         "正确答案": args.correct or "",
         "答题信心": args.confidence,
         "错因": args.cause,
-        "状态": "待巩固",
+        "状态": "未掌握",      # 写合法值：以前写「待巩固」，靠 normalize 的兜底才映射过来
     }
     # 用 replace 而不是 str.format：题干里出现 {x|x>0} 这类花括号时 format 会抛 KeyError
     body = BODY
@@ -144,6 +146,154 @@ def cmd_queue(_args):
             except (ValueError, TypeError):
                 extra = "  保持测试日期无法解析：%r（手改过？）" % keep
         print("  [%s] %-22s %s%s" % (stage, card["path"].stem, card["fm"].get("模块", ""), extra))
+
+
+def _read_card(name):
+    """按文件名（可省 .md）找一张错题，找不到就抛出可读的错。"""
+    stem = name[:-3] if name.endswith(".md") else name
+    path = MISTAKE_DIR / (stem + ".md")
+    if not path.exists():
+        matches = [p for p in MISTAKE_DIR.glob("*.md") if stem in p.stem]
+        if len(matches) == 1:
+            path = matches[0]
+        elif not matches:
+            raise KaogongError("找不到错题 %r（在 %s 下）" % (name, MISTAKE_DIR))
+        else:
+            raise KaogongError("%r 匹配到 %d 道，写全一点：%s"
+                               % (name, len(matches), "、".join(p.stem for p in matches[:3])))
+    fm, body, _ = read(path)
+    return path, fm, body
+
+
+def _stem_of(body):
+    """取出「## 题干」和「## ①」之间的内容。"""
+    match = re.search(r"##[ \t]*题干[ \t]*\n(.*?)(?=\n##[ \t]|\Z)", body, re.S)
+    return (match.group(1).strip() if match else body.strip())[:600]
+
+
+def cmd_variant(args):
+    """给「变式」关备一份出题简报。
+
+    生成由 agent 做，CLI 只把料备齐。为什么要生成而不是复用原题：
+    变式关考的是「换个情境还认不认得」，原题做对可能只是记住了答案。
+    """
+    path, fm, body = _read_card(args.card)
+    points = fm.get("知识点") or []
+    if isinstance(points, str):
+        points = [p.strip().strip(chr(34)) for p in points.strip("[]").split(",") if p.strip()]
+    print("  -- 出题简报：%s --" % path.stem)
+    print("  科目/模块   %s / %s" % (fm.get("科目", ""), fm.get("模块", "")))
+    print("  关联考点    %s" % ("、".join(str(p) for p in points) if points else "（没填，靠题干自判）"))
+    print("  原错因      %s  <- 新题要专门戳这个点" % fm.get("错因", ""))
+    print("  我当时选 %s   正确答案 %s" % (fm.get("我的答案", "") or "?",
+                                            fm.get("正确答案", "") or "?"))
+    print()
+    print("  原题题干：")
+    for line in _stem_of(body).splitlines()[:12]:
+        print("    " + line[:100])
+    print()
+    print("  -- 要求 --")
+    print("    1. 同一考点，换情境/换材料，别改数字复用原题")
+    print("    2. 干扰项要像样：错误选项得对应真会犯的错，别一眼假")
+    print("    3. 只出一道")
+    print("    4. 出完先别给答案，等作答")
+    print()
+    print("  用户答完后：")
+    print("    python3 ~/code/kaogong/pipeline/mistake.py verify %s --kind 变式 --result 对" % path.stem)
+
+
+def cmd_export(args):
+    """导出可打印的重做卷：题目在前、答案与解析附末尾。
+
+    那些在线错题本的「导出打印」，本地版就这么简单：一份 markdown，
+    用现成的 pdf 流程转一下就能打印。
+    """
+    rows = []
+    for path in (sorted(MISTAKE_DIR.glob("*.md")) if MISTAKE_DIR.exists() else []):
+        fm, body, _ = read(path)
+        if args.stage and normalize(fm.get("状态")) != resolve(args.stage):
+            continue
+        rows.append((str(fm.get("日期", "")), path.stem, fm, body))
+    rows.sort(reverse=True)
+    if args.limit:
+        rows = rows[:args.limit]
+    if not rows:
+        print("  没有符合条件的错题可导出")
+        return
+    lines = ["# 错题重做 · %s" % date.today(), "",
+             "> 共 %d 道。先自己做，答案与解析在最后。" % len(rows), "", "---", ""]
+    answers = ["---", "", "## 答案与解析", ""]
+    for i, (when, name, fm, body) in enumerate(rows, 1):
+        raw_points = fm.get("知识点") or "[]"
+        if isinstance(raw_points, list):
+            raw_points = "、".join(str(p) for p in raw_points)
+        clean = re.sub(r"[*_`>#\[\]]", "", str(raw_points)).replace(chr(34), "")
+        lines += ["### %d. %s | %s" % (i, fm.get("模块", ""), fm.get("来源", "") or when), "",
+                  _stem_of(body), "",
+                  "我的答案 ______   信心 %s" % fm.get("答题信心", ""), "",
+                  "<br><br><br>", ""]
+        answers += ["**%d. 正确答案 %s**（我当时 %s）" % (
+            i, fm.get("正确答案", "") or "?", fm.get("我的答案", "") or "未记"), "",
+            "错因：%s | 关联：%s" % (fm.get("错因", ""), clean or "未填"), ""]
+    text = "\n".join(lines + answers)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print("  已写出 %s（%d 道）" % (args.out, len(rows)))
+    else:
+        print(text)
+
+
+
+def cmd_list(args):
+    """按状态 / 来源 / 时间筛错题。
+
+    等价于 wrong-notebook 那几个筛选视图，但不用装 Dataview —— 零依赖，
+    手机上从 Telegram 也能跑。三个条件可以叠加。
+    """
+    from datetime import date as _date, timedelta
+    rows = []
+    skipped = 0
+    for path in (sorted(MISTAKE_DIR.glob("*.md")) if MISTAKE_DIR.exists() else []):
+        fm = read(path)[0]          # read() 返回 (front_matter, body, raw)
+        stage = normalize(fm.get("状态"))
+        if args.stage and stage != resolve(args.stage):
+            continue
+        if args.source and args.source not in str(fm.get("来源", "")):
+            continue
+        if args.days:
+            try:
+                when = _date.fromisoformat(str(fm.get("日期", "")))
+            except (ValueError, TypeError):
+                skipped += 1          # 没日期或日期被手改坏：不猜，单独报数
+                continue
+            if (_date.today() - when).days > args.days:
+                continue
+        rows.append((str(fm.get("日期", "")), stage, path.stem, fm))
+    if args.cause:
+        rows = [r for r in rows if str(r[3].get("错因", "")) == args.cause]
+
+    rows.sort(reverse=True)
+    conds = []
+    if args.stage:
+        conds.append("状态=%s" % args.stage)
+    if args.source:
+        conds.append("来源含「%s」" % args.source)
+    if args.days:
+        conds.append("最近 %d 天" % args.days)
+    if args.cause:
+        conds.append("错因=%s" % args.cause)
+    print("  %s  →  %d 道" % ("，".join(conds) if conds else "全部错题", len(rows)))
+    if skipped:
+        print("    （%d 道因日期缺失/无效被跳过，可能被手改过）" % skipped)
+    if not rows:
+        return
+    print()
+    print("  日期        状态      科目/模块        信心  错因      题目")
+    for when, stage, name, fm in rows:
+        print("  %-10s  %-6s  %-14s  %-3s  %-6s  %s" % (
+            when, stage,
+            str(fm.get("模块", ""))[:14], str(fm.get("答题信心", ""))[:3],
+            str(fm.get("错因", ""))[:6], name[:34]))
 
 
 def cmd_link(args):
@@ -231,6 +381,20 @@ def main():
     link.add_argument("--collection", default="notes")
     link.set_defaults(fn=cmd_link)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)
+    listing = sub.add_parser("list", help="按状态/来源/时间筛错题")
+    listing.add_argument("--stage", default="", help="待巩固/变式中/迁移中/待保持/已保持")
+    listing.add_argument("--source", default="", help="来源包含这段文字")
+    listing.add_argument("--days", type=int, default=0, help="只看最近 N 天")
+    listing.add_argument("--cause", default="", help="/".join(CAUSES))
+    listing.set_defaults(fn=cmd_list)
+    variant = sub.add_parser("variant", help="给变式关备一份出题简报")
+    variant.add_argument("card")
+    variant.set_defaults(fn=cmd_variant)
+    export = sub.add_parser("export", help="导出可打印的重做卷，答案附末尾")
+    export.add_argument("--stage", default="", help="只导某个状态")
+    export.add_argument("--limit", type=int, default=0, help="最多几道")
+    export.add_argument("--out", default="", help="写到文件；不给就打到屏幕")
+    export.set_defaults(fn=cmd_export)
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
     args = parser.parse_args()
     try:

@@ -13,6 +13,8 @@
 """
 from datetime import date, timedelta
 
+from pipeline.errors import KaogongError  # type: ignore[import]
+
 STEPS = ["未掌握", "变式中", "迁移中", "待保持", "已掌握"]
 GATE = {
     "变式": ("未掌握", "变式中", "迁移中", "待保持", "已掌握"),
@@ -28,6 +30,32 @@ def normalize(state_name):
     """把任意输入归一到合法状态（手改坏了就当未掌握）。"""
     value = (state_name or "").strip()
     return value if value in STEPS else "未掌握"
+
+
+ALIASES = {
+    "待巩固": "未掌握",
+    "巩固中": "未掌握",
+    "变式": "变式中",
+    "迁移": "迁移中",
+    "保持": "待保持",
+    "已保持": "已掌握",
+    "掌握": "已掌握",
+}
+
+
+def resolve(text):
+    """把**用户输入**的状态名解析成合法状态；不认识就报错。
+
+    和 normalize() 的分工：
+      normalize  读文件，宽容 —— 手改坏了当未掌握，不让一条坏数据炸掉整条链路
+      resolve    读输入，严格 —— 否则「已保持」这种不存在的状态会被悄悄当成
+                 「未掌握」，筛出来的集合完全不是用户要的（真实踩到过）
+    """
+    value = ALIASES.get((text or "").strip(), (text or "").strip())
+    if value not in STEPS:
+        raise KaogongError("状态只能是 %s（也认 %s），收到 %r"
+                           % ("/".join(STEPS), "、".join(sorted(ALIASES)), text))
+    return value
 
 
 def _int(value, default=0):
