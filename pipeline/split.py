@@ -17,12 +17,17 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline import vault  # type: ignore[import]  # noqa: E402
+from pipeline.paths import VAULT_ROOT  # type: ignore[import]  # noqa: E402
 
 # 卡片上属于“复习历史”的字段：重新切卡片时绝不能被覆盖
 PRESERVE = ("到期", "稳定度", "难度", "复习次数", "上次复习",
             "状态", "变式连胜", "迁移通过", "保持测试")
 
-ROOT = Path.home() / "Documents" / "Obsidian Vault" / "考公"
+# 路径从 paths.py 取 —— 别再自己拼一遍。
+# paths.py 的说明里点名「以前 vault 位置硬编码在 review / mistake / split / selftest
+# 四个文件里」，但 split 这里一直漏着没改：于是 KAOGONG_VAULT 覆盖对它无效，
+# 测试没法指向临时 vault（实测 split.ROOT 与 paths.VAULT_ROOT 不一致）。
+ROOT = VAULT_ROOT
 
 ITEM = re.compile(r"^([①-⑳]|\d+[.、]|[（(]\d+[）)]|\(\d+\))\s*")
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -40,11 +45,11 @@ def _write_note(path, text):
     不要用裸 write_text（中途崩会留下半截文件，而且没有快照可回滚）。
     """
     front_matter, body, raw = vault.split(text)
-    if front_matter:
-        vault.write(path, front_matter, body, raw)
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # **一律**走 vault.write。以前「没有 front-matter」时退化成裸 write_text ——
+    # 那正是这段 docstring 禁止的做法：中途崩会留下半截文件、也没有快照可回滚，
+    # 而骨架笔记恰好是这儿最大的那个文件。没有 front-matter 就写一个空的。
+    vault.write(path, front_matter or {}, body, raw)
 
 
 def parse_pages(paths):
@@ -53,7 +58,9 @@ def parse_pages(paths):
         # 路径来自命令行参数（使用者自己的文件），不是不可信输入
         try:
             text = Path(p).read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
+            # 编码坏的文件抛 UnicodeDecodeError（不是 OSError）——
+            # 那会让整批页面直接崩掉，而这里说好了是「跳过读不到的页」
             print("  跳过 %s（读不到：%s）" % (p, exc), file=sys.stderr)
             continue
         fm, body, _raw = read_front_matter(text)   # vault.split 返回三元组
@@ -106,6 +113,19 @@ def collect_items(pages):
             items.append((list(path), line, term, rest, pg["page"]))
     return items
 
+
+def _link_target(value):
+    """从 `所属小节` 里抠出双链目标（[[名字]] → 名字）。
+
+    必须比双链目标，不能用子串：「判断」会命中「[[判断推理-加强]]」，
+    于是不同讲义的卡片被当成同一张、静默跳过。
+
+    ⚠️ 这个函数以前**根本不存在** —— 上面那段注释写了一年，代码从没跑通过：
+    只要考点目录里已有同名卡片且没加 --force，就会 NameError 把整次切卡打崩。
+    之前没暴露是因为每次测试时卡片都还不存在（跳过 0 张），分支没被走到。
+    """
+    match = re.search(r"\[\[([^\]]+)\]\]", str(value or ""))
+    return match.group(1).strip() if match else ""
 
 def safe_name(s):
     """清掉文件名里不能出现的字符。清完为空就兜个名字 —— 否则会生成 ".md" 或 "-2.md"。"""

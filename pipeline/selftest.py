@@ -576,6 +576,45 @@ def main():
     check("新机制", _new_mechanisms)
 
 
+    def _link_target_helper():
+        # 双链目标提取。以前这个函数**根本不存在** —— 注释写了一年，代码从没跑通过：
+        # 考点目录里已有同名卡片且没加 --force 时，split.py 直接 NameError 崩掉。
+        assert split._link_target('[[判断推理-加强]]') == '判断推理-加强'
+        assert split._link_target('"[[含有 空格的名字]]"') == '含有 空格的名字'
+        # 空/缺失都要给空串，不能抛 —— 调用方靠它判「没写所属小节」
+        for empty in ('', None, '没有双链'):
+            msg = "%r 应返回空串" % (empty,)
+            assert split._link_target(empty) == '', msg
+        # 必须比双链目标而不是子串：「判断」会命中「[[判断推理-加强]]」，
+        # 那样不同讲义的卡片会被当成同一张、静默跳过
+        assert split._link_target('[[判断推理-加强]]') != '判断'
+
+
+    check("双链目标", _link_target_helper)
+
+
+    def _cli_error_boundary():
+        # CLI 的错误边界：领域错误要以「✗ 一句话」出现，不能是 traceback。
+        # 这条覆盖了整轮修的东西：库函数抛 KaogongError、只有 main() 翻退出码。
+        cases = ((["pipeline/classify.py"], "要一个页面文件"),
+                 (["pipeline/classify.py", "--suspects", "/tmp/没有这个文件.json"], "读不到 OCR 结果"),
+                 (["pipeline/review.py", "grade", "根本没有这张卡xyz", "1"], "✗"),
+                 (["pipeline/mistake.py", "list", "--stage", "瞎写的状态"], "✗"))
+        for argv, want in cases:
+            done = subprocess.run([sys.executable] + argv, cwd=str(ROOT),
+                                  capture_output=True, text=True)
+            blob = done.stdout + done.stderr
+            msg_code = "%s 应以退出码 1 结束，实际 %d" % (argv, done.returncode)
+            assert done.returncode == 1, msg_code
+            msg_want = "%s 的错误信息里没有 %r：%s" % (argv, want, blob[:120])
+            assert want in blob, msg_want
+            msg_trace = "%s 漏成了 traceback：%s" % (argv, blob[:160])
+            assert "Traceback" not in blob, msg_trace
+
+
+    check("CLI 错误边界", _cli_error_boundary)
+
+
     def _stage_resolution():
         # 用户输入的非法状态必须报错，不能静默当「未掌握」。
         # 踩过：校验写在过滤循环体里，库为空时循环一次都不跑 → 非法值被当成「0 道」。

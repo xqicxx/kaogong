@@ -8,7 +8,19 @@
 
 分类只在**黑字层**的文本上做；红笔层不参与分类（那是判对错与错因的依据）。
 """
+# 包内相对导入需要先把仓库根放进 sys.path —— 直接 `python3 pipeline/classify.py`
+# 也能跑。以前这行在 main() 里，于是模块顶层的库函数没法用领域异常，
+# 只好抛 SystemExit（库函数抛它违反项目约定：只有 main() 翻退出码）。
+import argparse
+import json
+import os
+import pathlib
 import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pipeline import answers as judge_module  # type: ignore[import]  # noqa: E402
+from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 
 HANDOUT = "handout"
 QUESTIONS = "questions"
@@ -206,7 +218,7 @@ def suspect_lines(page_json, max_chars=10, symbol_ratio=0.5):
     try:
         data = _json.loads(_pathlib.Path(page_json).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise SystemExit("读不到 OCR 结果 %s：%s" % (page_json, exc))
+        raise KaogongError("读不到 OCR 结果 %s：%s" % (page_json, exc))
     suspects = []
     for line in data.get("lines", []):
         text = (line.get("text") or "").strip()
@@ -234,14 +246,6 @@ def parse_student_answers(text):
 
 
 def main():
-    import argparse
-    import json
-    import pathlib
-    import sys
-
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-    from pipeline import answers as judge_module
-
     parser = argparse.ArgumentParser(description="页面分类 + 逐题判对错（只读，不改 vault）")
     parser.add_argument("page", nargs="?", help="页面 markdown（--suspects 时可不给）")
     parser.add_argument("--key", help="标准答案页 markdown")
@@ -249,7 +253,17 @@ def main():
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--suspects", help="黑字层 OCR 的 json，列出可疑的手写行")
     args = parser.parse_args()
+    # 领域异常统一在这里翻成退出码 —— 与 review / mistake 两个 CLI 一致。
+    # 少了这一层，KaogongError 也是以 traceback 的形式甩给用户，那就白抛了。
+    try:
+        run(args)
+    except KaogongError as exc:
+        print("  ✗ %s" % exc, file=sys.stderr)
+        sys.exit(1)
 
+
+def run(args):
+    """执行一次分类/判对错。参数解析留在 main()，这一层能单独调用与测试。"""
     if args.suspects:
         # 只列可疑行，不需要 page
         found = suspect_lines(args.suspects)
@@ -261,10 +275,22 @@ def main():
                 print("    conf %.2f  %s" % (item["conf"], item["text"][:40]))
         return
 
-    text = pathlib.Path(args.page).read_text(encoding="utf-8")
+    if not args.page:
+        # 以前不给页面会一路走到 Path(None).read_text() → TypeError traceback。
+        # 不能用 parser.error：parser 是 main() 的局部变量，run() 里拿不到。
+        raise KaogongError("要一个页面文件（或用 --suspects 指向 OCR 的 json）")
+    try:
+        text = pathlib.Path(args.page).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise KaogongError("读不到页面 %s：%s" % (args.page, exc))
     page_type = classify_page(text)
     questions = split_questions(text) if page_type in (QUESTIONS, UNKNOWN) else []
-    answer_key = parse_answer_key(pathlib.Path(args.key).read_text(encoding="utf-8")) if args.key else {}
+    answer_key = {}
+    if args.key:
+        try:
+            answer_key = parse_answer_key(pathlib.Path(args.key).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            raise KaogongError("读不到答案页 %s：%s" % (args.key, exc))
     student = parse_student_answers(args.student)
     results, summary = judge_module.judge_all(questions, answer_key, student)
 
