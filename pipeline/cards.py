@@ -56,7 +56,8 @@ def load(path):
     """读一张卡片，带上解析好的排期状态。"""
     front_matter, body, raw = read(path)
     return {"path": path, "fm": front_matter, "body": body, "raw": raw,
-            "state": read_state(front_matter)}
+            "state": read_state(front_matter),
+            "health": state_health(front_matter)}
 
 
 def all_cards():

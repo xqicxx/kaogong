@@ -16,6 +16,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# 这套自检靠 assert 表达不变量，而 python -O 会把 assert 全剥掉 —— 那就成了空跑
+if not __debug__:
+    print("自检依赖 assert，不能用 python -O 运行", file=sys.stderr)
+    sys.exit(2)
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -279,6 +284,38 @@ def _review_smoke():
         assert result.returncode == 0, "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
 
 
+
+
+def _card_health():
+    """坏卡必须能被认出来。
+
+    背景：state_health / broken_cards 一度是死代码（load() 忘了填 health 字段），
+    于是“字段坏了”的卡照样被当成新卡重新排期，真实复习历史被覆盖。
+    这个用例同时钉住 state_health 与 load() 的字段连线。
+    """
+    import tempfile
+    from pathlib import Path
+    from pipeline import cards, vault
+    good = "---\ntype: 考点\n到期: 2026-09-25\n稳定度: 12\n难度: 5\n复习次数: 1\n上次复习: 2026-09-13\n---\n\n正文\n"
+    broken = "---\ntype: 考点\n到期: 不是日期\n稳定度: abc\n难度: 5\n---\n\n正文\n"
+    fresh = "---\ntype: 考点\n状态: 未掌握\n---\n\n正文\n"
+    tmp = Path(tempfile.mkdtemp())
+    results = {}
+    for name, text in (("好卡", good), ("坏卡", broken), ("新卡", fresh)):
+        target = tmp / (name + ".md")
+        target.write_text(text, encoding="utf-8")
+        front_matter, _body, _raw = vault.read(target)
+        results[name] = cards.state_health(front_matter)
+    assert results["好卡"] == "ok", results
+    assert results["坏卡"] == "broken", "坏卡没被认出来：%r" % results
+    assert results["新卡"] == "none", results
+    # load() 必须真的把 health 带上，否则 broken_cards() 永远是空
+    target = tmp / "坏卡.md"
+    loaded = cards.load(target)
+    assert loaded.get("health") == "broken", "load() 没带 health：%r" % loaded.get("health")
+
+
+check("卡片健康度", _card_health)
 check("split 冒烟", _split_smoke)
 check("复习链路冒烟", _review_smoke)
 check("去重捞回", _dedup_rescue)

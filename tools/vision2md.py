@@ -273,9 +273,13 @@ def page_text(page):
 
 
 def existing_pages(out_dir):
-    """已经处理过的页（同一模块的 _raw 目录）—— 用于跨次运行去重。"""
-    import json as _json
+    """已经处理过的页（同一模块的 _raw 目录）—— 用于跨次运行去重。
+
+    --stdout / 不给 --out-dir 时这里是 None，跨次去重无事可做（不是错误）。
+    """
     from pathlib import Path
+    if not out_dir:
+        return []
     found = []
     for md in sorted(Path(out_dir).glob("*.md")) if Path(out_dir).exists() else []:
         try:

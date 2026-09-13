@@ -63,28 +63,6 @@ BODY = """## 题干
 """
 
 
-def find_mistake(name):
-    """按名字找错题。
-
-    错题文件名是「日期-模块-题干摘要.md」，所以按题干关键词找时必须用 *名字*，
-    只匹配「名字.md」或「名字*.md」永远找不到。
-    glob 会把名字里的 * ? [ ] 当通配符，所以先转义。
-    """
-    if not paths.MISTAKE_DIR.exists():
-        raise CardNotFound("错题目录还不存在：%s" % paths.MISTAKE_DIR)
-    safe = name.replace("[", "[[]").replace("?", "[?]").replace("*", "[*]")
-    exact = sorted(paths.MISTAKE_DIR.glob("*-%s.md" % safe))
-    if len(exact) == 1:
-        return exact[0]
-    fuzzy = sorted(paths.MISTAKE_DIR.glob("*%s*.md" % safe))
-    if not fuzzy:
-        raise CardNotFound("没找到错题：%s" % name)
-    if len(fuzzy) > 1:
-        raise AmbiguousCard("「%s」匹配到 %d 道错题：%s"
-                            % (name, len(fuzzy), "、".join(p.stem for p in fuzzy[:5])))
-    return fuzzy[0]
-
-
 def cmd_new(args):
     if args.confidence not in CONFIDENCE:
         raise KaogongError("答题信心只能是 高/中/低，收到 %r" % args.confidence)
