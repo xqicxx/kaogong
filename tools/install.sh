@@ -15,7 +15,7 @@ if [ "$(cd "$BIN" && pwd -P)" = "$(pwd -P)" ]; then
 fi
 
 failed=0
-for tool in rectify vision-ocr deink crop; do
+for tool in rectify vision-ocr deink crop pdf2img; do
   # 先编到临时文件：直接覆盖的话，编译失败会把上一版还能用的二进制一起删掉
   staged="$BIN/.$tool.new"
   rm -f "$staged"

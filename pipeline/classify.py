@@ -96,6 +96,11 @@ def classify_page(text):
     question_count = sum(1 for line in plain if QUESTION_START.match(line))
     option_count = sum(1 for line in plain if OPTION_LINE.match(line))
     handout_count = sum(1 for line in plain if HANDOUT_MARK.match(line))
+    # 「1.含义」和「1.甲持刀抢劫乙…」都是编号行，光看编号分不出来。
+    # 讲义小标题短、题干长 —— 用长度当第二判据，
+    # 免得把「选项 OCR 丢了」的题目页错判成讲义（那批页面本该报 unknown 让用户确认）
+    numbered = [line.strip() for line in plain if QUESTION_START.match(line) or HANDOUT_MARK.match(line)]
+    heading_like = sum(1 for line in numbered if len(line) <= 20)
 
     if ANSWER_MARK.search(body[:400]) and question_count <= max(2, option_count):
         return ANSWERS
@@ -107,12 +112,15 @@ def classify_page(text):
     # 只看编号会把讲义误判成题目；而题目一定有 A/B/C/D 选项，讲义没有。
     if option_count >= 2 and question_count >= 2:
         return QUESTIONS
-    if handout_count >= 2:
+    # 讲义：编号行必须**全是**短标题（真讲义的层级标题都短）。
+    # 只要有一条编号行长到像题干，就可能是「选项丢了」的题目页 →
+    # 报 unknown 交给用户确认，不硬塞（本文件的硬规矩）。
+    # ⚠️ 别只要求「有一条短标题」—— 题目里的短题干（「2.下列说法正确的是」）就能满足。
+    all_headings = bool(numbered) and heading_like == len(numbered)
+    if handout_count >= 2 and all_headings:
         return HANDOUT
-    if handout_count >= 1 and option_count == 0:
+    if handout_count >= 1 and option_count == 0 and all_headings:
         return HANDOUT
-    if question_count >= 2 and option_count == 0:
-        return HANDOUT          # 一堆编号但没有选项：讲义里的层级清单，不是题目
     return UNKNOWN
 
 

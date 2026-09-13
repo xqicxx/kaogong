@@ -30,7 +30,7 @@ if not __debug__:
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pipeline import errors, fsrs, mistake, review, split, vault  # noqa: E402
+from pipeline import classify, errors, fsrs, mastery, mistake, review, split, vault  # noqa: E402
 
 
 def load_vision2md():
@@ -484,6 +484,43 @@ def main():
     check("领域异常", _domain_errors)
     check("Markdown 转义", _md_escape)
     check("排期边界", _schedule_edges)
+
+
+    def _classification_guards():
+        # 编号很长却没有选项 —— 选项 OCR 丢失的题目页就是这个形态，
+        # 必须报 unknown 让用户确认，不能硬塞成讲义（本文件的硬规矩）
+        # 注意：点号后面**不能有空格** —— HANDOUT_MARK 要求 数字+点+紧跟非空白。
+        # 写成「1. 甲…」就匹配不上，这条用例会空转成假测试（真踩过）
+        no_options = ("1.甲持刀抢劫乙，乙趁机夺刀将甲刺伤，乙的行为如何认定\n"
+                      "2.下列关于犯罪未遂的说法正确的是\n")
+        assert classify.classify_page(no_options) == classify.UNKNOWN, \
+            "编号长又没选项的页面不能判成讲义"
+        # 讲义那种短小标题仍要认出来（这几行取自真实讲义页）
+        handout = "## 二、刑法的基本原则\n### （一）罪刑法定原则\n### 1.含义\n### 2.基本内容\n"
+        assert classify.classify_page(handout) == classify.HANDOUT, "讲义页必须认成 handout"
+        # 有选项的才是题目
+        questions = ("1. 下列说法正确的是\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n"
+                     "2. 下列说法错误的是\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n")
+        assert classify.classify_page(questions) == classify.QUESTIONS, "有选项的要认成题目"
+
+
+    check("分类判据", _classification_guards)
+
+
+    def _stage_resolution():
+        # 用户输入的非法状态必须报错，不能静默当「未掌握」。
+        # 踩过：校验写在过滤循环体里，库为空时循环一次都不跑 → 非法值被当成「0 道」。
+        for bad in ("瞎写的", "已保持xyz"):
+            expect_raises(errors.KaogongError,
+                          lambda b=bad: mastery.resolve(b),
+                          "非法状态 %r 必须拒绝" % bad)
+        for alias, want in (("待巩固", "未掌握"), ("已保持", "已掌握"),
+                            ("变式", "变式中"), ("未掌握", "未掌握")):
+            msg = "%s 应解析成 %s" % (alias, want)
+            assert mastery.resolve(alias) == want, msg
+
+
+    check("状态解析", _stage_resolution)
     check("三关闸门", _mastery_gates)
     check("文件命名", _naming)
     check("条目续行", _item_continuation)

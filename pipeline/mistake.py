@@ -208,10 +208,11 @@ def cmd_export(args):
     那些在线错题本的「导出打印」，本地版就这么简单：一份 markdown，
     用现成的 pdf 流程转一下就能打印。
     """
+    stage_filter = resolve(args.stage) if args.stage else ""
     rows = []
     for path in (sorted(MISTAKE_DIR.glob("*.md")) if MISTAKE_DIR.exists() else []):
         fm, body, _ = read(path)
-        if args.stage and normalize(fm.get("状态")) != resolve(args.stage):
+        if stage_filter and normalize(fm.get("状态")) != stage_filter:
             continue
         rows.append((str(fm.get("日期", "")), path.stem, fm, body))
     rows.sort(reverse=True)
@@ -237,7 +238,9 @@ def cmd_export(args):
             "错因：%s | 关联：%s" % (fm.get("错因", ""), clean or "未填"), ""]
     text = "\n".join(lines + answers)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
+        target = Path(args.out)
+        target.parent.mkdir(parents=True, exist_ok=True)   # 路径写错时给个干净的错，别裸崩
+        target.write_text(text, encoding="utf-8")
         print("  已写出 %s（%d 道）" % (args.out, len(rows)))
     else:
         print(text)
@@ -250,13 +253,16 @@ def cmd_list(args):
     等价于 wrong-notebook 那几个筛选视图，但不用装 Dataview —— 零依赖，
     手机上从 Telegram 也能跑。三个条件可以叠加。
     """
-    from datetime import date as _date, timedelta
+    from datetime import date as _date
+    # 校验必须在循环**外**做：「库是空的」时循环体一次都不执行，
+    # 非法状态永远碰不到 resolve()，用户看到的是「0 道」而不是报错（真实踩到过）
+    stage_filter = resolve(args.stage) if args.stage else ""
     rows = []
     skipped = 0
     for path in (sorted(MISTAKE_DIR.glob("*.md")) if MISTAKE_DIR.exists() else []):
         fm = read(path)[0]          # read() 返回 (front_matter, body, raw)
         stage = normalize(fm.get("状态"))
-        if args.stage and stage != resolve(args.stage):
+        if stage_filter and stage != stage_filter:
             continue
         if args.source and args.source not in str(fm.get("来源", "")):
             continue

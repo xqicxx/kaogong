@@ -12,6 +12,10 @@ guard args.count >= 5, let startPage = Int(args[3]), let count = Int(args[4]) el
     exit(1)
 }
 let scale = args.count >= 6 ? (Double(args[5]) ?? 2.0) : 2.0
+guard count >= 0 else {                       // 负数会让 0..<count 直接 trap(133)
+    FileHandle.standardError.write(Data("张数不能为负：\(count)\n".utf8))
+    exit(1)
+}
 let url = URL(fileURLWithPath: args[1])
 guard let doc = CGPDFDocument(url as CFURL) else {
     FileHandle.standardError.write(Data("打不开 PDF：\(args[1])\n".utf8))
