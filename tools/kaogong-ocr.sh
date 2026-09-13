@@ -14,7 +14,7 @@ START=1
 KEEP_TMP=""
 DEDUP=""
 WITH_MARKS=""
-WITH_MARKS=""
+MARKS_COLOR="any"
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -51,9 +51,17 @@ while [ $# -gt 0 ]; do
     shift
     ;;
   --with-marks)
-    # 额外产出红笔层图与红笔层文字（判对错、推错因的依据）
+    # 额外产出笔迹层图与文字（判对错、推错因的依据）
     WITH_MARKS=1
     shift
+    ;;
+  --marks-color)
+    [ $# -ge 2 ] || {
+      echo "--marks-color 后面要跟 red / blue / any" >&2
+      exit 2
+    }
+    MARKS_COLOR="$2"
+    shift 2
     ;;
   -h | --help)
     sed -n '2,8p' "$0"
@@ -138,7 +146,9 @@ for f in "${ARGS[@]}"; do
   t_ocr=$((t_ocr + ($(date +%s%N) - s) / 1000000))
   if [ -n "$WITH_MARKS" ]; then
     # 红笔层：把手写批注单独抠出来。印刷体留给 OCR，手写体留给我判
-    if "$BIN/deink" "$TMP/$name.jpg" "$TMP/$name-marks.jpg" --red-only >/dev/null 2>&1; then
+    # 默认 any：红笔、蓝笔、任何彩色笔都算；黑白印刷体是灰阶，不会被选中
+    if "$BIN/deink" "$TMP/$name.jpg" "$TMP/$name-marks.jpg" --marks "$MARKS_COLOR" \
+      >"$TMP/$name-marks.log" 2>&1; then
       "$BIN/vision-ocr" "$TMP/$name-marks.jpg" >"$TMP/$name-marks.txt" 2>/dev/null || true
     fi
   fi

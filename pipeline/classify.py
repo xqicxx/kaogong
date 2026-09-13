@@ -23,6 +23,8 @@ QUESTION_START = re.compile(r"^\s*(?:第\s*(\d{1,3})\s*题|(\d{1,3})\s*[.、．)
 OPTION_LINE = re.compile(r"^\s*([A-Da-dＡ-Ｄａ-ｄ])\s*[.、．)）](?=\s*\S)")
 # 同一行排四个选项（行测常态）时用来切开：只切位置，标记文本留给 OPTION_LINE 剥
 OPTION_SPLIT = re.compile(r"(?:^|\s)(?=[A-Da-dＡ-Ｄａ-ｄ]\s*[.、．)）])")
+# 页脚页码（第1页 / 1 / 一）—— 属于已知噪声，不是手写批注
+PAGE_NUM = re.compile(r"^第?\s*[0-9０-９一二三四五六七八九十]{1,4}\s*[页頁]?$")
 # 答案标语
 ANSWER_MARK = re.compile(r"参考?答案|答案与解析|答案：|解析：|标准答案")
 # 答案表：1-5 BCDAB / 1~5 BCDAB
@@ -41,6 +43,14 @@ FULLWIDTH_MAP = {**FULLWIDTH_DIGITS, **FULLWIDTH_LETTERS}
 def narrow(text):
     """全角数字/字母 → 半角。"""
     return str(text).translate(FULLWIDTH_MAP)
+
+
+def safe_float(value, default=0.0):
+    """把 OCR 给的置信度转成 float；转不动就退回默认值。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError, AttributeError):
+        return default
 
 
 def safe_int(value, default=0):
@@ -146,6 +156,42 @@ def parse_answer_key(text):
     return answers
 
 
+
+
+
+def suspect_lines(page_json, max_chars=10, symbol_ratio=0.5):
+    """从黑字层 OCR 结果里挑出「可能是手写批注」的行。
+
+    为什么需要它：**黑笔和印刷体同色，颜色分不开**（红笔蓝笔可以靠 --marks 分离）。
+
+    ⚠️ 别拿置信度当判据：Vision 对中文常给 0.5 这个整值，
+    实测按 conf<=0.5 筛会捞回整页正文（26 条里 24 条是正常印刷字）。
+    能区分的是「像不像正常文字」：极短，或符号占比过半 ——
+    手写的叉、勾、圈划在 OCR 输出里就长这样（例如「开、四」那种碎片）。
+
+    这份清单是「该去原图哪里看」的索引，**不是结论** —— 手写字最终还得看图。
+    """
+    import json as _json
+    import pathlib as _pathlib
+    try:
+        data = _json.loads(_pathlib.Path(page_json).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("读不到 OCR 结果 %s：%s" % (page_json, exc))
+    suspects = []
+    for line in data.get("lines", []):
+        text = (line.get("text") or "").strip()
+        if not text or len(text) > max_chars:
+            continue
+        if PAGE_NUM.match(text):
+            continue                       # 页码是已知噪声，不是手写
+        readable = sum(1 for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+        # 两条判据：极短（印刷正文不会只有三四个字），或符号占比过半
+        if len(text) <= 4 or readable / len(text) < symbol_ratio:
+            suspects.append({"text": text, "conf": safe_float(line.get("conf"), 1.0),
+                             "y": line.get("y", 0)})
+    return suspects
+
+
 def parse_student_answers(text):
     """解析手工给的作答，形如 1:B,2:D,3:A（读红笔层之后填入）。"""
     answers = {}
@@ -167,11 +213,23 @@ def main():
     from pipeline import answers as judge_module
 
     parser = argparse.ArgumentParser(description="页面分类 + 逐题判对错（只读，不改 vault）")
-    parser.add_argument("page", help="页面 markdown")
+    parser.add_argument("page", nargs="?", help="页面 markdown（--suspects 时可不给）")
     parser.add_argument("--key", help="标准答案页 markdown")
     parser.add_argument("--student", default="", help="学生作答，形如 1:B,2:D")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--suspects", help="黑字层 OCR 的 json，列出可疑的手写行")
     args = parser.parse_args()
+
+    if args.suspects:
+        # 只列可疑行，不需要 page
+        found = suspect_lines(args.suspects)
+        if args.json:
+            print(json.dumps(found, ensure_ascii=False, indent=1))
+        else:
+            print("  可疑行 %d 条（手写批注的候选，需对着原图核）：" % len(found))
+            for item in found[:20]:
+                print("    conf %.2f  %s" % (item["conf"], item["text"][:40]))
+        return
 
     text = pathlib.Path(args.page).read_text(encoding="utf-8")
     page_type = classify_page(text)

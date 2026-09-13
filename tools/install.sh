@@ -29,7 +29,7 @@ for tool in rectify vision-ocr deink crop; do
     # 只认 1：这几个工具无参时都是「打印用法 + exit 1」。
     # 126/127 是执行不了，134/139 是崩溃/段错误 —— 那些不算冒烟通过。
     if [ "$code" -eq 1 ]; then
-      mv -f "$staged" "$BIN/$tool"      # 冒烟通过了才顶替旧版本（原子替换）
+      mv -f "$staged" "$BIN/$tool" # 冒烟通过了才顶替旧版本（原子替换）
       echo "  ✓ $tool"
     else
       rm -f "$staged"

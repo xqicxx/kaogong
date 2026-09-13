@@ -3,21 +3,32 @@ import AppKit
 import CoreImage
 import CoreGraphics
 
-// 拍照预处理：去红笔。
-//   红墨水 R 高、G/B 低；印刷黑字三通道都低 → 判据 R - max(G,B) > 阈值
+// deink —— 处理照片里的手写笔迹。
 //
-// 匀光（--flatten）分支已删除：CIDivideBlendMode 的接线是反的（blur/ci），
-// 而且实测会把浅色字一起洗掉（真词命中 13/16 → 1/16）。留着只会被误用。
-// deink —— 把照片里的红色像素挑出来处理。
+// 两种用途：
+//   默认          把彩色笔迹抹白（去手写，给 OCR 用）
+//   --marks MODE  只留笔迹、其余抹白（把手写批注单独抠出来看）
 //
-// 两种模式：
-//   正常     把红色抹白（去红笔，给 OCR 用）
-//   --red-only  只留红色、其余抹白（把用户的手写批注单独抠出来看）
-//               —— 判对错就靠它：红笔的 ✓ ✗ 圈划和订正答案都在这一层
+// MODE 决定认哪种笔迹：
+//   red    红墨水      R - max(G,B) > 阈值
+//   blue   蓝墨水      B - max(R,G) > 阈值
+//   any    任何彩色墨  max(R,G,B) - min(R,G,B) > 阈值
+//   （默认 any —— 红笔蓝笔墨绿笔都算；黑白印刷体是灰阶、饱和度低，不会被选中）
+//
+// ⚠️ 黑笔分不开：黑色手写与印刷体都是灰阶，颜色判据无能为力。
+//    黑笔的叉只能靠「读原图」或「OCR 里的低置信度乱码行」来发现，见 kaogong-classify skill。
 let args = CommandLine.arguments
-let redOnly = args.contains("--red-only")
+var marksMode = ""
+var inkMode = "any"
+if let index = args.firstIndex(of: "--marks"), index + 1 < args.count {
+    marksMode = args[index + 1]
+}
+if let index = args.firstIndex(of: "--ink"), index + 1 < args.count {
+    inkMode = args[index + 1]
+}
+if args.contains("--red-only") { marksMode = "red" }      // 兼容旧写法
 guard args.count >= 3 else {
-    FileHandle.standardError.write("usage: deink <in> <out> [--thresh N] [--red-only]\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("usage: deink <in> <out> [--thresh N] [--marks red|blue|any] [--ink red|blue|any]\n".utf8))
     exit(1)
 }
 var thresh = 38
@@ -25,16 +36,27 @@ if let index = args.firstIndex(of: "--thresh"), index + 1 < args.count {
     if let value = Int(args[index + 1]) {
         thresh = value
     } else {
-        FileHandle.standardError.write(" --thresh 要跟整数，收到 \(args[index + 1])\n".data(using: .utf8)!)
+        FileHandle.standardError.write(Data(" --thresh 要跟整数，收到 \(args[index + 1])\n".utf8))
         exit(1)
     }
 }
 
-// 读图：这段一度被误删，导致 cg 未定义
+/// 这个像素算不算「彩色笔迹」。黑白印刷体三通道接近，饱和度低。
+func isColoredInk(red: Int, green: Int, blue: Int, mode: String) -> Bool {
+    switch mode {
+    case "red":
+        return red - max(green, blue) > thresh
+    case "blue":
+        return blue - max(red, green) > thresh
+    default:
+        return max(red, max(green, blue)) - min(red, min(green, blue)) > thresh
+    }
+}
+
 let source = NSImage(contentsOfFile: args[1])
 let cg = source?.cgImage(forProposedRect: nil, context: nil, hints: nil)
 if cg == nil {
-    FileHandle.standardError.write("读不到图片：\(args[1])\n".data(using: .utf8)!)
+    FileHandle.standardError.write(Data("读不到图片：\(args[1])\n".utf8))
     exit(2)
 }
 
@@ -46,32 +68,39 @@ guard let bctx = CGContext(data: &buf, width: width, height: height, bitsPerComp
 // CGContext.draw 按左下原点摆，makeImage 又按第 0 行在上解释，两次抵消 → 不要再翻转
 bctx.draw(cg!, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-var redCount = 0
+let extracting = !marksMode.isEmpty
+let mode = extracting ? marksMode : inkMode
+var hitCount = 0
 for index in stride(from: 0, to: buf.count, by: 4) {
     let red = Int(buf[index]), green = Int(buf[index + 1]), blue = Int(buf[index + 2])
-    let isRed = red - max(green, blue) > thresh
-    if redOnly {
-        if isRed {
-            buf[index] = 0; buf[index + 1] = 0; buf[index + 2] = 0     // 红 → 黑，好辨认
-            redCount += 1
+    let isInk = isColoredInk(red: red, green: green, blue: blue, mode: mode)
+    if extracting {
+        if isInk {
+            buf[index] = 0; buf[index + 1] = 0; buf[index + 2] = 0      // 笔迹转黑，好辨认
+            hitCount += 1
         } else {
             buf[index] = 255; buf[index + 1] = 255; buf[index + 2] = 255
         }
-    } else if isRed {
+    } else if isInk {
         buf[index] = 255; buf[index + 1] = 255; buf[index + 2] = 255
-        redCount += 1
+        hitCount += 1
     }
 }
 guard let outCG = bctx.makeImage() else { exit(6) }
 let rep = NSBitmapImageRep(cgImage: outCG)
 guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.92]) else { exit(7) }
-try data.write(to: URL(fileURLWithPath: args[2]))
-let ratio = 100.0 * Double(redCount) / Double(width * height)
-if redOnly {
-    print(String(format: "red-only: 红色像素占 %.2f%%", ratio))
+do {
+    try data.write(to: URL(fileURLWithPath: args[2]))
+} catch {
+    FileHandle.standardError.write(Data("写不出去：\(args[2])（\(error.localizedDescription)）\n".utf8))
+    exit(8)
+}
+let ratio = 100.0 * Double(hitCount) / Double(width * height)
+if extracting {
+    print(String(format: "%@ 笔迹层：占 %.2f%%", marksMode, ratio))
     if ratio < 0.05 {
-        FileHandle.standardError.write(Data("几乎没扫到红色 —— 这页大概没有红笔批注\n".utf8))
+        FileHandle.standardError.write(Data("几乎没扫到彩色笔迹 —— 这页可能是黑笔批改，或没有批注\n".utf8))
     }
 } else {
-    print(String(format: "deinked %.2f%% of pixels", ratio))
+    print(String(format: "去%@笔迹 %.2f%%", mode, ratio))
 }

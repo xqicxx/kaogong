@@ -41,6 +41,10 @@ def load_vision2md():
 
 
 vision2md = load_vision2md()
+# 套件曾被缩进错误静默截断：只跑了 4 项却退出码 0。
+# 这道护栏让「检查数明显变少」直接算失败。
+MIN_CHECKS = 30
+
 FAILURES = []
 CHECKS = [0]
 
@@ -397,6 +401,29 @@ def main():
             assert got == want, "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
 
 
+    def _suspect_lines_test():
+        """黑笔分不开颜色，只能靠「像不像正常文字」找手写碎片。"""
+        import json as _json
+        import pathlib as _pathlib
+        import tempfile
+        from pipeline import classify
+        page = {"lines": [
+            {"text": "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。", "conf": 0.5, "y": 0.2},
+            {"text": "开、四", "conf": 0.5, "y": 0.85},
+            {"text": "第2页", "conf": 0.5, "y": 0.95},
+        ]}
+        target = _pathlib.Path(tempfile.mkdtemp()) / "page.json"
+        try:
+            target.write_text(_json.dumps(page, ensure_ascii=False), encoding="utf-8")
+        except OSError as exc:
+            raise AssertionError("写临时 OCR 结果失败：%s" % exc)
+        path = str(target)
+        texts = [item["text"] for item in classify.suspect_lines(path)]
+        assert "开、四" in texts, "短碎片应当被列为可疑：%r" % texts
+        assert not any("排除他因" in text for text in texts), "长正文不该进可疑清单：%r" % texts
+        assert not any("第2页" in text for text in texts), "页码是有意义文字，不该进可疑清单：%r" % texts
+
+    check("可疑手写行", _suspect_lines_test)
     check("页面分类", _classify_pages)
     check("题目切分", _split_questions)
     check("答案表解析", _answer_key_formats)
@@ -495,6 +522,11 @@ def main():
         print("  %d/%d 项失败：" % (len(FAILURES), CHECKS[0]))
         for name, why in FAILURES:
             print("    ✗ %s — %s" % (name, why))
+        sys.exit(1)
+    # 套件曾被缩进错误静默截断：只跑了 4 项却退出码 0。检查数明显变少就算失败。
+    if CHECKS[0] < MIN_CHECKS:
+        print("  ✗ 只跑了 %d 项检查（至少应有 %d 项）—— 套件可能被截断了"
+              % (CHECKS[0], MIN_CHECKS), file=sys.stderr)
         sys.exit(1)
     print("  全部通过：%d 项" % CHECKS[0])
 
