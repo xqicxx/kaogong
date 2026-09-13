@@ -16,7 +16,13 @@ ANSWERS = "answers"
 UNKNOWN = "unknown"
 
 # 讲义的结构标记：第X章 / 第X节 / 一、 / （一） / 1.1
-HANDOUT_MARK = re.compile(r"^\s*(?:第[一二三四五六七八九十百\d]+[章节篇讲]|[一二三四五六七八九十]+[、.]|（[一二三四五六七八九十]+）|\d+\.\d+)\s*\S")
+HANDOUT_MARK = re.compile(
+    r"^\s*(?:第[一二三四五六七八九十百\d]+[章节篇讲]"     # 第二章 / 第3节
+    r"|[一二三四五六七八九十]+[、.]"                        # 一、 / 三.
+    r"|（[一二三四五六七八九十]+）"                          # （一）
+    r"|\d+\.\d+"                                         # 1.1
+    r"|\d+[.、]\S)\s*\S"                                # 1.含义（讲义小标题）
+)
 # 题号：1. / 1、 / 1． / 1) / 第1题
 QUESTION_START = re.compile(r"^\s*(?:第\s*(\d{1,3})\s*题|(\d{1,3})\s*[.、．)）])(?=\s*\S)")
 # 选项行：A. / A、 / A． / A)
@@ -64,8 +70,18 @@ def safe_int(value, default=0):
         return default
 
 
+# 流水线产出的是 markdown，标题带 ## 前缀；分类只看正文结构，
+# 匹配前先把 # 剥掉（否则「## 二、xxx」一条也认不出来 —— 拿真讲义跑才暴露的）
+HEADING_PREFIX = re.compile(r"^\s*#{1,6}\s*")
+
+
 def _lines(text):
     return [line.rstrip() for line in (text or "").splitlines()]
+
+
+def _plain(line):
+    """剥掉 markdown 标题前缀，便于用纯文本模式匹配。"""
+    return HEADING_PREFIX.sub("", line)
 
 
 def classify_page(text):
@@ -76,21 +92,27 @@ def classify_page(text):
     """
     lines = _lines(text)
     body = "\n".join(lines)
-    question_count = sum(1 for line in lines if QUESTION_START.match(line))
-    option_count = sum(1 for line in lines if OPTION_LINE.match(line))
-    handout_count = sum(1 for line in lines if HANDOUT_MARK.match(line))
+    plain = [_plain(line) for line in lines]
+    question_count = sum(1 for line in plain if QUESTION_START.match(line))
+    option_count = sum(1 for line in plain if OPTION_LINE.match(line))
+    handout_count = sum(1 for line in plain if HANDOUT_MARK.match(line))
 
     if ANSWER_MARK.search(body[:400]) and question_count <= max(2, option_count):
         return ANSWERS
     # 纯答案表：短行里大量「数字+字母」
     if len(parse_answer_key(body)) >= 3 and option_count == 0:
         return ANSWERS
-    if question_count >= 2 and option_count >= 2:
+    # 关键判据是「有没有选项」——
+    # 讲义的小标题（「1.含义」「2.基本内容」）和题号（「1. 甲伤害乙…」）长得一模一样，
+    # 只看编号会把讲义误判成题目；而题目一定有 A/B/C/D 选项，讲义没有。
+    if option_count >= 2 and question_count >= 2:
         return QUESTIONS
-    if handout_count >= 2 and question_count == 0:
+    if handout_count >= 2:
         return HANDOUT
-    if handout_count >= 1 and option_count == 0 and question_count <= 1:
+    if handout_count >= 1 and option_count == 0:
         return HANDOUT
+    if question_count >= 2 and option_count == 0:
+        return HANDOUT          # 一堆编号但没有选项：讲义里的层级清单，不是题目
     return UNKNOWN
 
 

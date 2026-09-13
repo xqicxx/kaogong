@@ -72,7 +72,7 @@ def split(text):
             continue
         if ":" in line and not line.lstrip().startswith("#"):
             k, v = line.split(":", 1)
-            fm[k.strip()] = v.strip()
+            fm[k.strip()] = _unquote(v.strip())
     body = "\n".join(lines[end + 1:]).lstrip("\n")
     raw = "\n".join(lines[1:end])
     return fm, body, raw
@@ -114,6 +114,18 @@ def merge_front_matter(raw_fm, updates):
         if k not in seen:
             out.append("%s: %s" % (k, _render(v)))
     return "\n".join(out)
+
+
+def _unquote(text):
+    """把写出时加的引号脱掉 —— 读写必须能往返。
+
+    不脱引号的话，空值会被读成两个字符的 '""'，日期解析失败，
+    整张卡就被当成"没排期"（真实踩到过：init 过的卡在 stats 里显示未排期）。
+    """
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in (chr(34), chr(39)):
+        inner = text[1:-1]
+        return inner.replace(chr(92) + chr(34), chr(34)).replace(chr(92) + chr(39), chr(39))
+    return text
 
 
 def _render(value):
