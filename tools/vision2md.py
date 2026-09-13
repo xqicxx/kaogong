@@ -230,7 +230,76 @@ def build_blocks(lines, med_h, col_w):
     return blocks
 
 
-def page_to_md(pg, noise, source, page_no, low_conf):
+def page_from_name(path):
+    """从文件名里抠出**真实页码**（取最后一段数字）。
+
+    为什么要它：kaogong-ocr.sh 用 shell glob 收图，而 glob 是**字典序** ——
+    jc2-p10 会排在 jc2-p8 前面。于是「输入里的第几张」根本不是书上的页码，
+    卡片里「来源: … pN」和骨架里的页注释全是错的。文件名里的数字才是真相。
+
+    没有数字就返回 0，由调用方退回「按输入顺序编号」。
+    """
+    stem = Path(path).stem
+    # 只认两种「像页码」的写法，别把手机图的 19743 这种 id 当页码：
+    #   jc2-p10 / 讲义-p005   —— 我们自己栅格化时的命名
+    #   197-xxx               —— 旧的「三位数前缀」约定
+    match = PAGE_IN_NAME.search(stem)
+    if match:
+        return safe_int(match.group(1), 0)
+    match = PAGE_PREFIX.match(stem)
+    if match:
+        return safe_int(match.group(1), 0)
+    return 0
+
+
+# 表格判据的阈值（从真页面实测反推，见 detect_table 的说明）
+LABEL_MAX_W = 0.25      # 左列标签的宽度上限
+CONTENT_MIN_W = 0.40    # 右侧内容的宽度下限
+TABLE_MIN_ROWS = 3      # 至少这么多行才认作表格
+
+
+def detect_table(lines, min_rows=TABLE_MIN_ROWS):
+    """这页像不像表格？返回 (bool, 表格行数)。
+
+    为什么必须靠几何判：Vision 是「按行 OCR」，表格会被压平成一行行文字、
+    甚至整块丢掉（实测一页漏掉约 1/3 内容），而置信度信号完全看不出来 ——
+    `ocr_uncertain` 在「零错字」的页上是 16/27，在漏了 1/3 的页上是 12/35，
+    同一个区间（Vision 对中文常给 0.5 整值）。
+
+    表格行的几何特征很干净：**同一个水平带里并排着多段短文本，彼此有缝隙**。
+    正文段落即使换行，同一带里也只有一段。
+    """
+    usable = [l for l in lines if l.get("text")]
+    if len(usable) < 4:
+        return False, 0
+    # ⚠️ 判据是**从真页面实测出来的**，不是想出来的。
+    # 第一版按「同一 y 带里有 ≥2 段短文本」判，在真数据上完全反了：
+    # 真表格页判 False、流程图页判 True。看坐标才发现原因 ——
+    # Vision 已经把表格内容压成**整行**了，真正的信号是：
+    #     表格行 = 左侧一个**短标签** + 右侧一条**长内容**，两者 y 区间重叠
+    # 例如 jc2-p10：`特征`(x=0.131 w=0.043) 与
+    #      `单位犯罪一般表现为…`(x=0.222 w=0.678) 同在 y≈0.208–0.215。
+    # 正文段落换行时，同一带的各行左边界相同、宽度也接近，不会出现这种「短+长」配对。
+    rows = 0
+    for line in usable:
+        if line.get("w", 1.0) > LABEL_MAX_W:
+            continue                                   # 左列标签一定是短的
+        top = line["y"]
+        bottom = top + max(line.get("h", 0.01), 0.01)
+        for other in usable:                           # O(n²)，n≤40 行，够用
+            if other is line or other.get("w", 0) < CONTENT_MIN_W:
+                continue                               # 右列内容一定是长的
+            if other["x"] <= line["x"]:
+                continue                               # 必须在标签右边
+            other_top = other["y"]
+            other_bottom = other_top + max(other.get("h", 0.01), 0.01)
+            if other_top < bottom and top < other_bottom:   # y 区间重叠
+                rows += 1
+                break
+    return (rows >= min_rows), rows
+
+
+def page_to_md(pg, noise, source, page_no, low_conf, source_file=""):
     lines = [l for l in pg["lines"] if not is_noise(l, noise)]
     if not lines:
         return "", 0
@@ -251,11 +320,16 @@ def page_to_md(pg, noise, source, page_no, low_conf):
     chars = sum(len(b[2]) for b in blocks)
     low = [l for l in lines if l["conf"] < low_conf]
     uncertain = [l for l in lines if l["conf"] < 0.7]
+    is_table, table_rows = detect_table(lines)
     fm = [
         "---",
         "source: %s" % source,
         "page: %d" % page_no,
+        # 原图名要留着：文件名是唯一能追回「这是书里第几页」的线索
+        "source_file: %s" % (source_file or Path(pg["path"]).name),
         "ocr: macos-vision",
+        "table: %s" % ("true" if is_table else "false"),
+        "table_rows: %d" % table_rows,
         "ocr_lines: %d" % len(lines),
         "ocr_low_conf: %d" % len(low),
         "ocr_uncertain: %d/%d" % (len(uncertain), len(lines)),
@@ -272,6 +346,9 @@ def page_to_md(pg, noise, source, page_no, low_conf):
     return out, chars
 
 
+# 文件名里的页码：jc2-p10 / 讲义-p005（我们自己栅格化时的命名）
+PAGE_IN_NAME = re.compile(r"-\s*p(\d{1,4})(?:\D|$)", re.I)
+# 旧约定：三位数前缀 + 横杠（如 197-xxx）
 PAGE_PREFIX = re.compile(r"^(\d{3})-")
 
 
@@ -341,6 +418,9 @@ def run():
     args = ap.parse_args()
 
     pages = [load(p) for p in args.jsons]
+    # 按**文件名里的页码**排序：shell glob 是字典序，jc2-p10 会排在 jc2-p8 前面，
+    # 不排的话输出顺序和书上的顺序对不上（而骨架是按顺序拼的）
+    pages.sort(key=lambda pg: page_from_name(pg["path"]))
     dropped = []
     if not args.no_dedup:
         pages, dropped = dedup_pages(pages, args.out_dir, args.dedup_threshold)
@@ -353,19 +433,20 @@ def run():
     for i, pg in enumerate(pages):
         # 页号跟“输入里的第几张”走，而不是“成功处理的第几张”——
         # 中间有一张失败时，后者会把后面的页整体往前挪一位
-        matched = PAGE_PREFIX.match(Path(pg["path"]).stem)
-        # PAGE_PREFIX 只匹配三位数字，理论上不会解析失败；但页号算错会让整份笔记的
-        # 页码整体错位，所以仍旧走 safe_int —— 解析不出来就退回「按输入顺序编号」，
-        # 与没有页码前缀时同一套逻辑。
-        page_no = (args.start_page + safe_int(matched.group(1), i + 1) - 1
-                   if matched else args.start_page + i)
-        md, chars = page_to_md(pg, noise, args.source, page_no, args.low_conf)
+        # 页码优先取文件名里的真实数字（这样卡片「来源: … pN」才对得上书）；
+        # 文件名没有页码（例如手机拍的照片）才退回按输入顺序编号
+        resolved = page_from_name(pg["path"])
+        page_no = resolved or (args.start_page + i)
+        md, chars = page_to_md(pg, noise, args.source, page_no, args.low_conf,
+                               Path(pg["path"]).name)
         total += chars
         if args.stdout:
             sys.stdout.write(md + "\n")
         elif args.out_dir:
             Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-            name = "%s-p%03d.md" % (args.source, args.start_page + i)
+            # 文件名用**真实页码**，别再跟输入序号走 —— 否则文件名、页码、
+            # 卡片来源三处互相矛盾
+            name = "%s-p%03d.md" % (args.source, page_no)
             (Path(args.out_dir) / name).write_text(md, encoding="utf-8")
             print("  %s  %d 字" % (name, chars), file=sys.stderr)
         else:

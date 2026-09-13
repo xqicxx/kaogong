@@ -634,6 +634,43 @@ def main():
     check("verify 认两类卡", _verify_accepts_both_kinds)
 
 
+    def _ocr_layout_signals():
+        if vision2md is None:
+            return
+        # ── 页码必须取自文件名 ──
+        # shell glob 是字典序：jc2-p10 排在 jc2-p8 前面，
+        # 于是「输入里的第几张」不是书上的页码，卡片来源会全错。
+        assert vision2md.page_from_name("jc2-p10.json") == 10
+        assert vision2md.page_from_name("讲义-p005.json") == 5
+        assert vision2md.page_from_name("197-abc.json") == 197
+        # 手机图的 id 不能被当页码（老写法会取前三位得到 197）
+        assert vision2md.page_from_name("19743.json") == 0
+        assert vision2md.page_from_name("19743-mark.json") == 0
+
+        # ── 表格检测：判据与坐标都取自真页面 jc2-p10（刑法分则·单位犯罪那页）──
+        # 表格行 = 左侧短标签 + 右侧长内容、y 区间重叠
+        def row(text, x, y, w, h=0.02):
+            return {"text": text, "x": x, "y": y, "w": w, "h": h, "conf": 1.0}
+
+        table = [row("特征", 0.131, 0.215, 0.043), row("单位犯罪一般表现为…", 0.222, 0.208, 0.678),
+                 row("形式", 0.131, 0.343, 0.043), row("可以是故意犯罪…", 0.224, 0.330, 0.674),
+                 row("处罚制度", 0.113, 0.438, 0.079), row("双罚制：单位犯罪的…", 0.224, 0.427, 0.674)]
+        is_table, rows = vision2md.detect_table(table)
+        msg_table = "真表格页的坐标应判为表格，实际 %s（行 %s）" % (is_table, rows)
+        assert is_table and rows >= 3, msg_table
+
+        # 普通段落：左边界相同、宽度接近 → 不是表格
+        prose = [row("犯罪主体是单位，即依法成立的公司。", 0.1, 0.10, 0.8),
+                 row("单位犯罪是由单位的决策机构决定的。", 0.1, 0.13, 0.85),
+                 row("单位犯罪以刑法明文规定为前提。", 0.1, 0.16, 0.7),
+                 row("只有当刑法明确规定单位可以成为主体时。", 0.1, 0.19, 0.9)]
+        is_table2, rows2 = vision2md.detect_table(prose)
+        assert not is_table2, "普通段落不该判成表格，实际 %s 行" % rows2
+
+
+    check("OCR 版面信号", _ocr_layout_signals)
+
+
     def _stage_resolution():
         # 用户输入的非法状态必须报错，不能静默当「未掌握」。
         # 踩过：校验写在过滤循环体里，库为空时循环一次都不跑 → 非法值被当成「0 道」。

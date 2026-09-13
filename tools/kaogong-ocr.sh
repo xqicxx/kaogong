@@ -175,6 +175,15 @@ if [ -n "$WITH_MARKS" ]; then
   done
   echo "  笔迹层（红/蓝/彩色） → $OUT/marks/"
 fi
+# 表格页要当场点出来：Vision 会把表格内容压平甚至整块丢掉，
+# 而置信度信号看不出来（中文常给 0.5 整值）。实测一页漏了约 1/3 内容。
+tbl=$(grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | wc -l | tr -d ' ')
+if [ "${tbl:-0}" -gt 0 ]; then
+echo "  ⚠️ 有 $tbl 页检出表格：Vision 会压平表格、可能漏内容，校准这页务必对着原图逐段核" >&2
+grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | while read -r f; do
+printf '      %s（表格行约 %s）\n' "$(basename "$f")" "$(grep -m1 '^table_rows:' "$f" | sed 's/.*: *//')" >&2
+done
+fi
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
 # 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
 if [ "$FAILED" -gt 0 ]; then
