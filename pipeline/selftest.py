@@ -626,8 +626,9 @@ def main():
         try:
             mistake._find_any(missing)
         except errors.CardNotFound as exc:
-            msg = "找不到时的提示要点明「考点和错题」两类，实际：%s" % exc
-            assert "考点" in str(exc) and "错题" in str(exc), msg
+            text = str(exc)
+            assert "考点" in text, "找不到时的提示要提到考点，实际：%s" % text
+            assert "错题" in text, "找不到时的提示要提到错题，实际：%s" % text
 
 
     check("verify 认两类卡", _verify_accepts_both_kinds)
