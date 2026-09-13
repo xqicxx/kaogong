@@ -238,7 +238,7 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
 ④ 排期时把**语义相近的知识点错开**（同一批里不放两个“削弱方式”类近义点）
    —— LECTOR 2025 指出的坑；考公大量近义术语（削弱/质疑、支持/加强）尤其致命
 
-⑤ 题型用**交错练习**，机制是判别对比：混着出题，逼你分辨“这题该用哪一招”
+⑤ 题型用**交错练习**，机制是判别对比：混着出题，逼你分辨“这题该用哪一招”　✅ 已实现
    —— 按题型块刷题 = 分块练习，效果差（Rohrer & Taylor；Foster 2019）
 
 ⑥ 配比：逾期的优先、新学限额、题型固定混入（见 2.3 推送结构）
@@ -265,7 +265,9 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
            └ 交错：从 ≥2 个题型里各抽 1 题（防分块练习，练判别）
            · 同批内做语义去重（同一批不出现近义知识点）
            卡片带 Obsidian 链接，点开就是笔记
-库内面板 Obsidian Tasks / Dataview：⏳ 到期日 + 逾期红标
+库内面板 考公/复习面板.md —— **静态 markdown**，每次推送后自动重写
+         ⚠️ 原计划写的是 Dataview，但查过本机 `.obsidian/plugins` —— Dataview 根本没装，
+            写成 query 代码块就是死代码（打开只看到一段文本）。改成生成静态页：零插件依赖、手机也能看。
 ```
 
 ---
@@ -364,7 +366,13 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
 任一次失败 → 状态回退（不清零，FSRS 自动缩短间隔）
 ```
 
-额外：给每道题算**区分度** —— “会的人也会错”的题不是好检测题，用答题数据回归题目难度（IRT 2PL 简化版），把无效题剔出验证集。
+额外：给每道题算**区分度** —— “会的人也会错”的题不是好检测题，把无效题剔出验证集。
+
+           ✅ **已实现**（`pipeline/discriminate.py` + `mistake.py discriminate`），但要说清一件事：
+           **真 IRT 需要一群人答题**才能估出难度与区分度两个参数；单用户直接套 2PL 是把噪声当参数。
+           所以只做可解释的那一半 —— 用真实作答结果判「这题对你还有没有鉴别力」：
+           一路过（连胜 ≥4 且已掌握）→ 剔出验证集；反复被绊住 → 太难，留着提醒但不当判据；
+           有对有错 → 留在验证集。**宁可不下结论也不猜** —— 判错会把好题剔掉。
 
 ---
 
@@ -413,7 +421,20 @@ fm     source / page / ocr / ocr_lines / ocr_uncertain / characters / proofread
 第 3 步  考点卡片落地（折中两层）                  ✅ 完成
 第 4 步  FSRS 排期 + 每天早上 08:00 Telegram 推送   ✅ 完成
 第 5 步  错题本（录入/分流/关联/掌握三关）          ✅ 完成
-第 6 步  拿真实讲义跑量（用户发照片）              ← 现在唯一剩的
+第 6 步  拿真实讲义跑量（用户发照片）              ← 唯一剩的「用起来」
+```
+
+### 6.x PLAN 里写了、后来补上的（2026-09-13 第 7-8 轮）
+
+```text
+③ successive relearning 「模糊想起不算过、当天重来」
+      → review.plan_for()：评「2 勉强」把到期日拉回今天（不动 S/D —— 记忆强度归 FSRS）
+⑤ 题型交错练习  → pipeline/interleave.py：轮转挑选，相邻两题必不同型；
+                  源是「错因=程序性」的错题（概念性走概念转变、粗心不进队列）
+面板          → pipeline/panel.py：静态 markdown，零插件依赖
+区分度        → pipeline/discriminate.py：单用户代理指标（真 IRT 要一群人）
+
+顺带解耦：错题读取抽成 pipeline/mistakes.py（review 与 mistake 共用一份形状）
 ```
 
 **三个 skill 已装**：

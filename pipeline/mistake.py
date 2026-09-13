@@ -27,7 +27,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.cards import all_cards, find  # type: ignore[import]  # noqa: E402
 from pipeline.errors import (  # type: ignore[import]  # noqa: E402
     AmbiguousCard, CardNotFound, InvalidState, KaogongError)
+from pipeline.discriminate import (太难, 无鉴别力, 有鉴别力, 样本不足,
+                                   summarize)  # type: ignore[import]  # noqa: E402
 from pipeline.mastery import STEPS, advance, from_card, normalize, resolve, to_card  # type: ignore[import]  # noqa: E402
+from pipeline.mistakes import records  # type: ignore[import]  # noqa: E402
 from pipeline.paths import MISTAKE_DIR, VAULT_ROOT  # type: ignore[import]  # noqa: E402
 from pipeline.vault import read, safe_float, write, yaml_value  # type: ignore[import]  # noqa: E402
 
@@ -247,6 +250,33 @@ def cmd_export(args):
 
 
 
+def cmd_discriminate(_args):
+    """列出建议剔出验证集的题（题目鉴别力）。
+
+    真 IRT 需要一群人答题才能估参数；单用户只能用可解释的代理指标，
+    判据见 pipeline/discriminate.py。
+    """
+    result = summarize(records())
+    buckets = result["buckets"]
+    total = sum(len(v) for v in buckets.values())
+    if not total:
+        print("  还没有错题 —— 录几道之后这里能看出哪些题已经测不出你会不会")
+        return
+    print("  共 %d 道：有鉴别力 %d / 太难 %d / 无鉴别力 %d / 样本不足 %d" % (
+        total, len(buckets[有鉴别力]), len(buckets[太难]),
+        len(buckets[无鉴别力]), len(buckets[样本不足])))
+    for label, note in ((无鉴别力, "一路过，已经测不出你会不会 → 建议剔出验证集"),
+                        (太难, "反复被它绊住 → 该拆小或归档，别再放进验证"),
+                        (样本不足, "复习次数太少，先不下结论")):
+        rows = buckets[label]
+        if not rows:
+            continue
+        print()
+        print("  %s（%d）—— %s" % (label, len(rows), note))
+        for stats in rows[:8]:
+            print("    %-28s 连胜 %d  复习 %d 次" % (stats["name"][:28], stats["streak"], stats["reps"]))
+
+
 def cmd_list(args):
     """按状态 / 来源 / 时间筛错题。
 
@@ -393,6 +423,7 @@ def main():
     listing.add_argument("--days", type=int, default=0, help="只看最近 N 天")
     listing.add_argument("--cause", default="", help="/".join(CAUSES))
     listing.set_defaults(fn=cmd_list)
+    sub.add_parser("discriminate", help="题目鉴别力：哪些题该剔出验证集").set_defaults(fn=cmd_discriminate)
     variant = sub.add_parser("variant", help="给变式关备一份出题简报")
     variant.add_argument("card")
     variant.set_defaults(fn=cmd_variant)

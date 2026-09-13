@@ -30,7 +30,8 @@ if not __debug__:
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pipeline import classify, errors, fsrs, mastery, mistake, review, split, vault  # noqa: E402
+from pipeline import (classify, discriminate, errors, fsrs, interleave, mastery,  # noqa: E402
+                      mistake, panel, review, split, vault)
 
 
 def load_vision2md():
@@ -505,6 +506,42 @@ def main():
 
 
     check("分类判据", _classification_guards)
+
+
+    def _new_mechanisms():
+        # 交错练习：相邻两题必须不同型 —— 这正是逼出判别的那一步
+        items = [{"题型": "判断推理", "标题": "A"}, {"题型": "判断推理", "标题": "B"},
+                 {"题型": "常识判断", "标题": "C"}]
+        picked, why = interleave.pick(items, limit=3)
+        assert len(picked) == 3, "三题够挑满"
+        assert interleave.is_interleaved(picked), "交错后相邻题不能同型"
+        # 只有一种题型时不该硬凑 —— 那会退化成分块练习，正是要避免的
+        single, why = interleave.pick([{"题型": "判断推理", "标题": "A"}], limit=3)
+        assert single == [] and why, "只有一种题型时交错不成立，要给出理由"
+
+        # 区分度：一路过的要剔；太难的留着提醒（剔了就再也看不见）
+        sample = [{"name": "一路过", "状态": "已掌握", "变式连胜": 6, "复习次数": 5},
+                  {"name": "反复绊", "状态": "未掌握", "变式连胜": 0, "复习次数": 4},
+                  {"name": "有对有错", "状态": "变式中", "变式连胜": 1, "复习次数": 2}]
+        verdict = discriminate.summarize(sample)
+        assert [s["name"] for s in verdict["drop"]] == ["一路过"], "一路过的题要剔出验证集"
+        kept = [s["name"] for s in verdict["keep"]]
+        assert "反复绊" in kept and "有对有错" in kept, "太难的不剔，有鉴别力的留"
+
+        # 面板：正文不带 front-matter（曾经和 vault.write 自己包的那层叠成两道）
+        body = panel.build([("卡A", "判断推理", "逾期 2 天")], [], [], [], [])
+        assert not body.lstrip().startswith("---"), "面板正文不能自带 front-matter"
+        assert "# 复习面板" in body and "卡A" in body
+        assert "今天到期" in body and "无鉴别力" in body
+
+        # 「勉强」= 当天重来（PLAN 2.2 ③ successive relearning）
+        planned, redo = review.plan_for(None, 2, today=date(2026, 9, 13))
+        assert redo and planned["due"] == date(2026, 9, 13), "评「勉强」必须留在今天重来"
+        planned, redo = review.plan_for(None, 3, today=date(2026, 9, 13))
+        assert not redo and planned["due"] > date(2026, 9, 13), "评「对了」不该留在今天"
+
+
+    check("新机制", _new_mechanisms)
 
 
     def _stage_resolution():

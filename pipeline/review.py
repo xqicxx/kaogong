@@ -23,9 +23,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.cards import (all_cards, broken_cards, by_index, find,
                             save_state, state_fields)  # type: ignore[import]  # noqa: E402
 from pipeline.dedup import split_siblings  # type: ignore[import]  # noqa: E402
+from pipeline.discriminate import summarize as discrimination  # type: ignore[import]  # noqa: E402
 from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 from pipeline.fsrs import FIRST_INTERVAL_DAYS, r_of, schedule  # type: ignore[import]  # noqa: E402
+from pipeline.interleave import pick as pick_interleaved  # type: ignore[import]  # noqa: E402
+from pipeline.mistakes import records as mistake_records  # type: ignore[import]  # noqa: E402
 from pipeline.notify import SAFE_LENGTH, send  # type: ignore[import]  # noqa: E402
+from pipeline.panel import build as build_panel, refresh as refresh_panel  # type: ignore[import]  # noqa: E402
 from pipeline.paths import PUSH_STATE, STATE_DIR  # type: ignore[import]  # noqa: E402
 from pipeline.vault import write  # type: ignore[import]  # noqa: E402
 
@@ -42,6 +46,8 @@ def _elapsed(card, today):
     """距上次复习过了多久。没复习过的（init 之后）算 0。"""
     last = card["state"]["last"]
     return max(0, (today - (last or today)).days)
+
+
 
 
 def build_message(limit, today=None):
@@ -112,9 +118,52 @@ def build_message(limit, today=None):
             keep = card["fm"].get("保持测试") or ""
             tail = "　保持测试 %s" % keep if stage == "待保持" and keep else ""
             lines += ["• %s　[%s]%s" % (md_safe(card["path"].stem), stage, tail), ""]
+    # 交错练习（PLAN 2.2 ⑤）：题型靠「判别」不靠记忆，
+    # 按题型块刷属于分块练习，块内不需要判别、机械重复就能过。
+    # 源是「错因=程序性」的错题 —— 概念性走概念转变流程，粗心不进队列（PLAN 3.3 分流）。
+    records = mistake_records()
+    picks, why = pick_interleaved(
+        [r for r in records if r["错因"] == "程序性" and r["状态"] != "已掌握"], limit=3)
+    if picks:
+        lines += ["**🔀 交错练习（相邻不同型，练判别）**", ""]
+        for position, item in enumerate(picks, 1):
+            lines += ["%d. [%s] %s" % (position, md_safe(item["题型"]), md_safe(item["标题"])), ""]
+    elif why and any(r["错因"] == "程序性" for r in records):
+        # 有程序性错题却凑不出两种题型 —— 这本身就是该告诉用户的事
+        lines += ["（交错练习：%s，先多录几道程序性错题）" % why, ""]
     lines += ["---", "", "回分：`编号 评分`　1=忘了　2=勉强　3=对了　4=太简单", "",
               "例：`3 4` 表示第 3 张给“太简单”"]
-    return "\n".join(lines), due[:shown_review] + fresh[:3]
+    return "\n".join(lines), due[:shown_review] + fresh[:3], \
+        _panel_data(due, fresh, pending, broken, records, today)
+
+
+def _panel_data(due, fresh, pending, broken, records, today):
+    """备好面板要的行。排版细节归 panel.py，这里只出数据 —— 换展示方式不用碰这里。"""
+    def rows(cards, note_of=None):
+        out = []
+        for card in cards:
+            fm = card["fm"]
+            out.append((card["path"].stem, fm.get("模块", ""),
+                        note_of(card) if note_of else ""))
+        return out
+
+    def late_note(card):
+        late = (today - card["state"]["due"]).days
+        return "逾期 %d 天" % late if late > 0 else "今天到期"
+
+    def stage_note(card):
+        return (card["fm"].get("状态") or "").strip()
+
+    verdict = discrimination(records)
+    drop = [(s["name"], s["cause"] or "—", "连胜 %d（已掌握）" % s["streak"])
+            for s in verdict["drop"]]
+    return {
+        "due": rows(due, late_note),
+        "fresh": rows(fresh),
+        "pending": rows(pending, stage_note),
+        "broken": [card["path"].stem for card in broken],
+        "drop": drop,
+    }
 
 
 def cmd_init(_args):
@@ -144,7 +193,7 @@ def cmd_due(args):
 
 
 def cmd_push(args):
-    message, sent = build_message(args.limit)
+    message, sent, panel_data = build_message(args.limit)
     if args.dry:
         print(message)
         print("\n  （dry run，未发送；本次会推 %d 张）" % len(sent))
@@ -157,6 +206,13 @@ def cmd_push(args):
         {"date": str(date.today()), "cards": [card["path"].stem for card in sent]},
         ensure_ascii=False, indent=1), encoding="utf-8")
     print("  发送退出码 %s（%d 张，编号表已存 %s）" % (status, len(sent), PUSH_STATE))
+    # 面板是「视图」，写完推完才算数；但它坏掉不该让已经发出去的推送变成失败，
+    # 所以只在大声报错的同时照常退出 0 —— 不能悄悄咽掉。
+    try:
+        panel_path = refresh_panel(build_panel(**panel_data))
+        print("  面板已刷新：%s" % panel_path)
+    except (KaogongError, OSError) as exc:
+        print("  ⚠️ 推送已发出，但面板没刷新：%s" % exc)
 
 
 def cmd_grade(args):
@@ -170,14 +226,40 @@ def cmd_grade(args):
     # FSRS-4.5 里同日重复评分几乎不改变稳定度（R(0)=1 → 增量因子为 0），
     # 一天评一次是正常用法，但重复评要提醒，免得误以为“多评几次就记住了”
     same_day = (card["state"] or {}).get("last") == date.today()
-    planned = schedule(card["state"], args.rating)
+    planned, same_day_redo = plan_for(card["state"], args.rating)
     save_state(card, planned)
     print("  %s  评分 %d  S=%.1f D=%.2f  下次 %s（%.0f 天后）" % (
         card["path"].stem, args.rating, planned["s"], planned["d"], planned["due"],
         (planned["due"] - date.today()).days))
+    if same_day_redo:
+        print("    ↻ 「勉强」不算过（successive relearning）：这张卡留在今天的到期队列里，"
+              "请再完整回忆一次，别看一眼答案就算")
     if same_day:
         print("    ⚠️ 今天已经评过这张卡了 —— 同日重复评分不改变稳定度"
               "（FSRS-4.5 的 R(0)=1，增量因子为 0），间隔不会因此拉长")
+
+
+def plan_for(state, rating, today=None):
+    """评分 → 新计划。返回 (计划, 是否要求当天重来)。
+
+    抽成纯函数是为了能单独测：这条「勉强不算过」的规矩要是哪天被改掉，
+    测试会立刻红 —— 而它藏在 cmd_grade 里的时候只能靠手工试。
+
+    PLAN 2.2 ③ successive relearning：「模糊想起」「看一眼答案」都不算过，当天重来。
+    这里只把到期日拉回今天，**不动 S/D** —— 记忆强度归 FSRS 管，
+    本函数改的只是「什么时候再考一次」。
+    """
+    today = today or date.today()
+    planned = schedule(state, rating)
+    if rating == 2:
+        return dict(planned, due=min(planned["due"], today)), True
+    return planned, False
+
+
+def cmd_panel(_args):
+    """单独刷新库内面板（不改任何排期状态，只重写展示用的那一页）。"""
+    _message, _sent, panel_data = build_message(10)
+    print("  已刷新：%s" % refresh_panel(build_panel(**panel_data)))
 
 
 def cmd_reset(args):
@@ -252,6 +334,7 @@ def main():
     grade.add_argument("rating", type=int, choices=[1, 2, 3, 4])
     grade.set_defaults(fn=cmd_grade)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)
+    sub.add_parser("panel").set_defaults(fn=cmd_panel)
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
     reset = sub.add_parser("reset")
     reset.add_argument("--yes", action="store_true")
