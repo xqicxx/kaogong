@@ -13,7 +13,7 @@
 import importlib.util
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 # 约定：
@@ -129,6 +129,17 @@ def main():
             assert nxt["due"] > state["due"], "下次到期必须往后走"
             assert nxt["reps"] == state["reps"] + 1
         assert fsrs.r_of(0, 10) > fsrs.r_of(100, 10), "R 必须随时间下降"
+
+        # 回归：遗忘绝不能让稳定度变大。
+        # 原始 4.5 公式在低稳定度时会算出 S_f > S，"又忘了"反而把间隔拉长 ——
+        # 用官方 py-fsrs 函数级对照时发现（180 组网格 8 组病态）。
+        today = date(2026, 9, 1)
+        for s in (0.3, 0.5, 1.0, 3.7, 12.0):
+            for elapsed in (1, 2, 3, 30):
+                state = {"s": s, "d": 9.5, "reps": 2, "last": today}
+                after = fsrs.schedule(state, 1, today + timedelta(days=elapsed))
+                msg = "忘掉之后稳定度不能变大：S=%.2f 隔 %d 天忘掉 → %.3f" % (s, elapsed, after["s"])
+                assert after["s"] <= s + 1e-9, msg
 
 
     def _mastery_gates():

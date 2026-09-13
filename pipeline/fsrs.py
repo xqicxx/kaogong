@@ -96,11 +96,17 @@ def schedule(state, grade, today=None):
         reps = safe_count(safe_number(state.get("reps"), 0))
         elapsed = max(0, (today - state["last"]).days) if state.get("last") else 0
         retrievability = r_of(elapsed, stability)
+        # 这里的 (4 - 3) 不是笔误：难度回归的目标是 D0(4)（即"太简单"档的初始难度），
+        # 而不是 D0(grade) —— 与官方 4.5 参考实现一致
         base = min(max(W[4] - (4 - 3) * W[5], 1), 10)
         difficulty = min(max(W[7] * base + (1 - W[7]) * (difficulty - W[6] * (grade - 3)), 1), 10)
         if grade == 1:
-            stability = (W[11] * difficulty ** -W[12] * ((stability + 1) ** W[13] - 1)
+            forgotten = (W[11] * difficulty ** -W[12] * ((stability + 1) ** W[13] - 1)
                          * math.exp(W[14] * (1 - retrievability)))
+            # 遗忘绝不能让稳定度变大。原始公式在低稳定度（S<1 天）时会算出 S_f > S，
+            # 于是"又忘了"反而把间隔拉长 —— 官方实现也有这道闸（min(S_f, S/…)，见 py-fsrs）。
+            # 用官方 py-fsrs 做函数级对照时发现的，180 组网格里 8 组病态。
+            stability = min(forgotten, stability)
         else:
             hard = W[15] if grade == 2 else 1.0
             easy = W[16] if grade == 4 else 1.0
