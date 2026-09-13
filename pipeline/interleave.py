@@ -34,12 +34,24 @@ def pick(items, limit=3):
 
     # 顺序固定：按题型名排序，保证同样的输入得到同样的输出（可复现、好测）
     queues = [groups[name] for name in sorted(groups)]
-    picked, index = [], 0
-    while len(picked) < limit and any(queues):
-        queue = queues[index % len(queues)]
-        if queue:
-            picked.append(queue.pop(0))
-        index += 1
-        if index > limit * len(queues) * 2:      # 防御：不该发生，但不让它转死
+    picked = []
+    while len(picked) < limit:
+        # 只挑「队首题型 != 上一题题型」的队列。
+        # ⚠️ 光靠轮转不够：某个题型先取完时轮转会连出同型
+        #    （5 道判断推理 + 1 道常识判断，第 3 题起就变成 AAA），
+        #    那已经退化成块练习 —— 契约是「相邻必不同型」，宁可少出几道。
+        nxt = None
+        for queue in queues:
+            if not queue:
+                continue
+            if picked and str(queue[0].get("题型")) == str(picked[-1].get("题型")):
+                continue
+            nxt = queue
             break
+        if nxt is None:
+            break                                # 剩下的全是同一型：停比连出同型好
+        item = nxt.pop(0)
+        picked.append(item)
+        queues.remove(nxt)                       # 轮转：刚用过的排到队尾
+        queues.append(nxt)
     return picked, ""

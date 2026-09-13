@@ -27,7 +27,7 @@ from pipeline.discriminate import summarize as discrimination  # type: ignore[im
 from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 from pipeline.fsrs import FIRST_INTERVAL_DAYS, r_of, schedule  # type: ignore[import]  # noqa: E402
 from pipeline.interleave import pick as pick_interleaved  # type: ignore[import]  # noqa: E402
-from pipeline.mistakes import records as mistake_records  # type: ignore[import]  # noqa: E402
+from pipeline.mistakes import read_all as read_mistakes  # type: ignore[import]  # noqa: E402
 from pipeline.notify import SAFE_LENGTH, send  # type: ignore[import]  # noqa: E402
 from pipeline.panel import build as build_panel, refresh as refresh_panel  # type: ignore[import]  # noqa: E402
 from pipeline.paths import PUSH_STATE, STATE_DIR  # type: ignore[import]  # noqa: E402
@@ -121,7 +121,7 @@ def build_message(limit, today=None):
     # 交错练习（PLAN 2.2 ⑤）：题型靠「判别」不靠记忆，
     # 按题型块刷属于分块练习，块内不需要判别、机械重复就能过。
     # 源是「错因=程序性」的错题 —— 概念性走概念转变流程，粗心不进队列（PLAN 3.3 分流）。
-    records = mistake_records()
+    records, skipped_mistakes = read_mistakes()
     picks, why = pick_interleaved(
         [r for r in records if r["错因"] == "程序性" and r["状态"] != "已掌握"], limit=3)
     if picks:
@@ -131,6 +131,10 @@ def build_message(limit, today=None):
     elif why and any(r["错因"] == "程序性" for r in records):
         # 有程序性错题却凑不出两种题型 —— 这本身就是该告诉用户的事
         lines += ["（交错练习：%s，先多录几道程序性错题）" % why, ""]
+    if skipped_mistakes:
+        # 静默跳过的卡会从复习队列里凭空少掉，必须让用户看见
+        lines += ["**⚠️ %d 道错题读不出来（已跳过，不影响今天的复习）**" % len(skipped_mistakes), "",
+                  "  ".join(md_safe(p.stem) for p in skipped_mistakes[:5]), ""]
     lines += ["---", "", "回分：`编号 评分`　1=忘了　2=勉强　3=对了　4=太简单", "",
               "例：`3 4` 表示第 3 张给“太简单”"]
     return "\n".join(lines), due[:shown_review] + fresh[:3], \

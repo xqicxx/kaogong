@@ -44,12 +44,10 @@ def item_stats(item):
     这样调用方（mistake.py）不用先转换一层。
     """
     stage = str(item.get("状态") or "").strip()
-    passed_migration = str(item.get("迁移通过") or "").strip().lower() in ("true", "1", "yes")
     return {
         "name": item.get("name") or item.get("卡名") or "?",
         "stage": stage,
         "streak": _int(item.get("变式连胜")),
-        "passed_migration": passed_migration,
         "reps": _int(item.get("复习次数")),
         "cause": str(item.get("错因") or "").strip(),
     }

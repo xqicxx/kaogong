@@ -31,7 +31,6 @@ def build(due, fresh, pending, broken, drop, today=None):
     due / fresh / pending / drop 都是「已排好序的行」，每行是 (卡名, 模块, 备注)；
     broken 是坏卡名字列表。
     """
-    today = today or datetime.date.today()
     # 正文不含 front-matter —— 那一段由 refresh() 交给 vault.write 统一写，
     # 否则会和 write() 自己包的那层 `---` 叠成两道（真出过这个 bug）
     out = [
@@ -80,7 +79,4 @@ def refresh(text, today=None):
     return target
 
 
-def due_row(card, note=""):
-    """从一张卡造一行。放这里是为了让 review.py 不用知道面板的行格式。"""
-    fm = card.get("fm") or {}
-    return (card["path"].stem, fm.get("模块", ""), note)
+

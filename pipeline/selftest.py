@@ -13,6 +13,7 @@
 import importlib.util
 import subprocess
 import sys
+import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -31,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from pipeline import (classify, discriminate, errors, fsrs, interleave, mastery,  # noqa: E402
-                      mistake, panel, review, split, vault)
+                      mistake, mistakes, panel, review, split, vault)
 
 
 def load_vision2md():
@@ -533,6 +534,24 @@ def main():
         assert not body.lstrip().startswith("---"), "面板正文不能自带 front-matter"
         assert "# 复习面板" in body and "卡A" in body
         assert "今天到期" in body and "无鉴别力" in body
+
+        # 交错契约：题量不均衡时也不能连出同型（曾经轮转会退化成 AAA）
+        lopsided = ([{"题型": "判断推理", "标题": "A%d" % i} for i in range(5)]
+                    + [{"题型": "常识判断", "标题": "B"}])
+        picked2, _ = interleave.pick(lopsided, limit=6)
+        assert interleave.is_interleaved(picked2), "某个题型取完后不能连出同型（那就成块练习了）"
+
+        # 坏笔记要跳过并上报，不能让整批读崩掉（以前只 catch OSError，
+        # UnicodeDecodeError 会把整天的推送搞挂）
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "坏.md"
+            bad.write_bytes(b"\xff\xfe bad")
+            original, mistakes.paths = mistakes.paths, lambda: [bad]
+            try:
+                got, skipped = mistakes.read_all()
+            finally:
+                mistakes.paths = original
+            assert got == [] and skipped == [bad], "坏笔记要跳过并原样上报"
 
         # 「勉强」= 当天重来（PLAN 2.2 ③ successive relearning）
         planned, redo = review.plan_for(None, 2, today=date(2026, 9, 13))

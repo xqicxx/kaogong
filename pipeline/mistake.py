@@ -30,7 +30,7 @@ from pipeline.errors import (  # type: ignore[import]  # noqa: E402
 from pipeline.discriminate import (太难, 无鉴别力, 有鉴别力, 样本不足,
                                    summarize)  # type: ignore[import]  # noqa: E402
 from pipeline.mastery import STEPS, advance, from_card, normalize, resolve, to_card  # type: ignore[import]  # noqa: E402
-from pipeline.mistakes import records  # type: ignore[import]  # noqa: E402
+from pipeline.mistakes import read_all  # type: ignore[import]  # noqa: E402
 from pipeline.paths import MISTAKE_DIR, VAULT_ROOT  # type: ignore[import]  # noqa: E402
 from pipeline.vault import read, safe_float, write, yaml_value  # type: ignore[import]  # noqa: E402
 
@@ -256,8 +256,12 @@ def cmd_discriminate(_args):
     真 IRT 需要一群人答题才能估参数；单用户只能用可解释的代理指标，
     判据见 pipeline/discriminate.py。
     """
-    result = summarize(records())
+    items, skipped = read_all()
+    result = summarize(items)
     buckets = result["buckets"]
+    if skipped:
+        print("  ⚠️ %d 道读不出来（编码或结构坏了），已跳过：%s"
+              % (len(skipped), "、".join(p.name for p in skipped[:3])))
     total = sum(len(v) for v in buckets.values())
     if not total:
         print("  还没有错题 —— 录几道之后这里能看出哪些题已经测不出你会不会")
