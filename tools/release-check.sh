@@ -46,12 +46,12 @@ for script in vision2md.py kaogong-ocr.sh; do
 done
 
 section "3. Python 依赖与语法"
-if python3 -c "import ast,sys; [ast.parse(open('pipeline/'+f).read()) for f in ('paths.py','errors.py','fsrs.py','cards.py','notify.py','mastery.py','vault.py','review.py','mistake.py','split.py','selftest.py')]" 2>/dev/null; then
+if python3 -c "import ast,sys; [ast.parse(open('pipeline/'+f).read()) for f in ('paths.py','errors.py','fsrs.py','cards.py','notify.py','mastery.py','dedup.py','classify.py','answers.py','vault.py','review.py','mistake.py','split.py','selftest.py')]" 2>/dev/null; then
   pass "pipeline/*.py 语法通过"
 else
   fail "pipeline 里有语法错误"
 fi
-for m in paths errors fsrs cards notify mastery vault review mistake split; do
+for m in paths errors fsrs cards notify mastery dedup classify answers vault review mistake split; do
   if python3 -c "import sys; sys.path.insert(0,'.'); from pipeline import $m" 2>/dev/null; then
     pass "pipeline.$m 可导入"
   else

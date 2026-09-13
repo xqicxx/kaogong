@@ -316,6 +316,89 @@ def _card_health():
 
 
 check("卡片健康度", _card_health)
+
+
+PAGE_QUESTIONS = chr(10).join([
+    "1. 甲伤害乙，乙冠心病发作死亡。甲的行为与死亡结果之间：",
+    "A. 无因果关系    B. 有因果关系",
+    "C. 视情况而定    D. 无法判断",
+    "",
+    "2. 关于介入因素，下列说法正确的是：",
+    "A. 介入因素必然中断因果关系",
+    "B. 介入因素异常且独立引起结果时中断",
+])
+PAGE_HANDOUT = chr(10).join([
+    "第一章 逻辑论证之归因论证",
+    "一、归因论证定义",
+    "归因论证的核心，是对已发生的既定事实进行原因探究。",
+    "（一）三类常规结构通用方法",
+    "本部分内容适用于对比实验归因。",
+])
+PAGE_ANSWERS = chr(10).join([
+    "参考答案与解析",
+    "1. B",
+    "2. D",
+    "3. ABD",
+])
+
+
+def _classify_pages():
+    from pipeline import classify
+    assert classify.classify_page(PAGE_QUESTIONS) == classify.QUESTIONS, "题目页没认出来"
+    assert classify.classify_page(PAGE_HANDOUT) == classify.HANDOUT, "讲义页没认出来"
+    assert classify.classify_page(PAGE_ANSWERS) == classify.ANSWERS, "答案页没认出来"
+    assert classify.classify_page("随便一段话") == classify.UNKNOWN, "乱内容应当判 unknown"
+    # 全角是 OCR 的常态，不能因此漏整页
+    fullwidth = "１． 题干一" + chr(10) + "Ａ． 选项甲" + chr(10) + "２． 题干二" + chr(10) + "Ｂ． 选项乙"
+    assert classify.classify_page(fullwidth) == classify.QUESTIONS, "全角题目页没认出来"
+
+
+def _split_questions():
+    from pipeline import classify
+    questions = classify.split_questions(PAGE_QUESTIONS)
+    assert len(questions) == 2, "应当切出 2 道题，得到 %d" % len(questions)
+    assert questions[0]["number"] == 1 and questions[1]["number"] == 2
+    # 题干不能丢字：题号模式里多一个 \S 就会把首字吃掉
+    assert questions[0]["stem"].startswith("甲伤害乙"), "题干首字被吃了：%r" % questions[0]["stem"][:6]
+    # 同一行四个选项也要全抽出来
+    assert len(questions[0]["options"]) == 4, "同行选项没抽全：%r" % questions[0]["options"]
+    assert questions[1]["options"][1].startswith("介入因素异常"), questions[1]["options"]
+
+
+def _answer_key_formats():
+    from pipeline import classify
+    expected = {1: "B", 2: "C", 3: "D", 4: "A", 5: "B"}
+    for text in ("1-5 BCDAB", "1~5 BCDAB", "1—5 BCDAB", "１－５ ＢＣＤＡＢ"):
+        assert classify.parse_answer_key(text) == expected, "%r 解析不对：%s" % (text, classify.parse_answer_key(text))
+    single = classify.parse_answer_key("1. B" + chr(10) + "2．C" + chr(10) + "3、D")
+    assert single == {1: "B", 2: "C", 3: "D"}, single
+    assert classify.parse_answer_key("") == {}, "空文本该返回空表"
+
+
+def _judge_answers():
+    from pipeline import answers
+    cases = [
+        ("B", "B", answers.RIGHT),
+        ("b", "Ｂ", answers.RIGHT),          # 全角/大小写不算错
+        ("选 B", "B", answers.RIGHT),        # 手写常见噪声
+        ("DBA", "ABD", answers.RIGHT),        # 多选顺序无关
+        ("AB", "ABD", answers.WRONG),         # 少选算错
+        ("B", "D", answers.WRONG),
+        ("√", "正确", answers.RIGHT),         # 判断题
+        ("×", "错误", answers.RIGHT),
+        ("", "B", answers.UNKNOWN),          # 没作答 → 待定，不能猜
+        ("不会", "B", answers.UNKNOWN),
+        ("B", "", answers.UNKNOWN),
+    ]
+    for student, correct, want in cases:
+        got = answers.judge(student, correct)
+        assert got == want, "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
+
+
+check("页面分类", _classify_pages)
+check("题目切分", _split_questions)
+check("答案表解析", _answer_key_formats)
+check("判对错", _judge_answers)
 check("split 冒烟", _split_smoke)
 check("复习链路冒烟", _review_smoke)
 check("去重捞回", _dedup_rescue)
