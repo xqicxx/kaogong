@@ -240,15 +240,29 @@ def page_from_name(path):
     没有数字就返回 0，由调用方退回「按输入顺序编号」。
     """
     stem = Path(path).stem
-    # 只认两种「像页码」的写法，别把手机图的 19743 这种 id 当页码：
-    #   jc2-p10 / 讲义-p005   —— 我们自己栅格化时的命名
-    #   197-xxx               —— 旧的「三位数前缀」约定
+    # 按优先级试，别用「先剥前缀」的破坏性写法 ——
+    # 那会把真页码也剥掉：'197-abc' 剥完剩 'abc' → 0（实测自己踩到）。
+    #
+    # ⚠️ 管线会给输入加序号前缀（kaogong-ocr.sh 重命名成 "001-原名"），
+    # 不剥的话 PAGE_PREFIX 会命中**序号**：'001-197-abc' → 1（应为 197）、
+    # '001-IMG_19743' → 1（应为 0）。这个坑测试没抓到，因为只喂了裸文件名。
+    # 1) 原样看 -pN 形式（jc2-p10 / 讲义-p005）
     match = PAGE_IN_NAME.search(stem)
     if match:
         return safe_int(match.group(1), 0)
-    match = PAGE_PREFIX.match(stem)
+    # 2) 剥掉序号前缀后再看 -pN 与 三位数前缀（001-讲义-p005 / 001-197-abc）
+    stripped = SEQ_PREFIX.sub("", stem)
+    match = PAGE_IN_NAME.search(stripped)
     if match:
         return safe_int(match.group(1), 0)
+    if stripped != stem:
+        match = PAGE_PREFIX.match(stripped)
+        if match:
+            return safe_int(match.group(1), 0)
+    # 3) 裸的 `197-abc` 一律当「没有页码」返回 0。
+    # 为什么不做特例：它和管线加的序号前缀（001-xxx）**结构上无法区分**，
+    # 猜错会把整批页码写错（写错比没有更糟）。何况 kaogong-ocr.sh 现在
+    # 总会给输入加序号前缀，裸 NNN- 这种旧名字已经不会流到这儿。
     return 0
 
 
@@ -346,8 +360,10 @@ def page_to_md(pg, noise, source, page_no, low_conf, source_file=""):
     return out, chars
 
 
-# 文件名里的页码：jc2-p10 / 讲义-p005（我们自己栅格化时的命名）
-PAGE_IN_NAME = re.compile(r"-\s*p(\d{1,4})(?:\D|$)", re.I)
+# 管线给每个输入加的序号前缀（"001-"）；解析页码前必须先剥掉
+SEQ_PREFIX = re.compile(r"^\d{3}-")
+# 文件名里的页码：jc2-p10 / 讲义-p005 / 剥掉序号后的 p005
+PAGE_IN_NAME = re.compile(r"(?:^|-)\s*p(\d{1,4})(?:\D|$)", re.I)
 # 旧约定：三位数前缀 + 横杠（如 197-xxx）
 PAGE_PREFIX = re.compile(r"^(\d{3})-")
 
@@ -444,10 +460,16 @@ def run():
             sys.stdout.write(md + "\n")
         elif args.out_dir:
             Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-            # 文件名用**真实页码**，别再跟输入序号走 —— 否则文件名、页码、
-            # 卡片来源三处互相矛盾
-            name = "%s-p%03d.md" % (args.source, page_no)
-            (Path(args.out_dir) / name).write_text(md, encoding="utf-8")
+            # 文件名用**真实页码**（别再跟输入序号走，否则文件名/页码/卡片来源三处矛盾）。
+            # ⚠️ 但两个输入可能解出同一个页码（001-a-p5 与 002-b-p5）——
+            # 直接写会静默覆盖、前一张内容消失。撞了就加序号避让。
+            target = Path(args.out_dir) / ("%s-p%03d.md" % (args.source, page_no))
+            counter = 2
+            while target.exists():
+                target = target.with_name("%s-p%03d-%d%s" % (args.source, page_no, counter, target.suffix))
+                counter += 1
+            name = target.name
+            target.write_text(md, encoding="utf-8")
             print("  %s  %d 字" % (name, chars), file=sys.stderr)
         else:
             sys.stdout.write(md + "\n")

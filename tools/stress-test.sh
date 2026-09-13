@@ -67,7 +67,9 @@ set +e
 ocr_code=$?
 set -e
 END_TS=$(date +%s); elapsed=$((END_TS - START_TS))
-produced=$(ls "$KAOGONG_VAULT/_raw/行测/常识判断/"*.md 2>/dev/null | wc -l | tr -d ' ')
+# || true 不能省：set -e + pipefail 下 ls 空 glob 会返回非零，
+# 而「零产出」正是这里要上报的情形（否则脚本死在这一行，报不出问题）
+produced=$(ls "$KAOGONG_VAULT/_raw/行测/常识判断/"*.md 2>/dev/null | wc -l | tr -d ' ' || true)
 [ "$produced" -gt 0 ] && ok "产出 $produced 页，耗时 ${elapsed}s" || bad '一页都没产出'
 grep -q '识别失败\|读不到图片' "$TMP/ocr.log" && ok '坏文件被识别并报错' || bad '坏文件没被识别'
 [ "$ocr_code" -gt 0 ] && ok "退出码 $ocr_code（有失败时不为 0）" || bad '有失败却退出 0'

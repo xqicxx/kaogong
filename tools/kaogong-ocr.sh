@@ -10,7 +10,11 @@ BIN="${HOME}/.pi/bin"
 # vault 路径必须从 paths.py 取 —— 它是唯一来源。
 # 这个脚本原来自己拼了一遍，于是 KAOGONG_VAULT 对它无效：
 # 压力测试时 60 页机器产物直接写进了真库（实测踩到）。
-VAULT="$(python3 -c "import sys; sys.path.insert(0, '$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)'); from pipeline.paths import VAULT_ROOT; print(VAULT_ROOT)" 2>/dev/null || echo "${HOME}/Documents/Obsidian Vault/考公")"
+# ⚠️ 必须 realpath：本脚本被软链到 ~/.pi/bin，BASH_SOURCE 给的是软链路径，
+#    算出 ~/.pi 而不是仓库根 → 导入失败 → 静默退回真库（实测踩到过）。
+#    vision2md.py 里当年也踩过同一个坑，注释还在。
+REPO="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd -P)"
+VAULT="$(python3 -c "import sys; sys.path.insert(0, '$REPO'); from pipeline.paths import VAULT_ROOT; print(VAULT_ROOT)" 2>/dev/null || echo "${HOME}/Documents/Obsidian Vault/考公")"
 SOURCE="未命名讲义"
 MODULE="_inbox"
 START=1
@@ -180,7 +184,9 @@ if [ -n "$WITH_MARKS" ]; then
 fi
 # 表格页要当场点出来：Vision 会把表格内容压平甚至整块丢掉，
 # 而置信度信号看不出来（中文常给 0.5 整值）。实测一页漏了约 1/3 内容。
-tbl=$(grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | wc -l | tr -d ' ')
+# || true 不能省：set -e + pipefail 下，grep 零命中会返回 1，
+# 整条赋值失败 → 脚本当场退出（而没有表格页的批次是常态）。
+tbl=$(grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | wc -l | tr -d ' ' || true)
 if [ "${tbl:-0}" -gt 0 ]; then
   echo "  ⚠️ 有 $tbl 页检出表格：Vision 会压平表格、可能漏内容，校准这页务必对着原图逐段核" >&2
   grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | while read -r f; do

@@ -642,10 +642,18 @@ def main():
         # 于是「输入里的第几张」不是书上的页码，卡片来源会全错。
         assert vision2md.page_from_name("jc2-p10.json") == 10
         assert vision2md.page_from_name("讲义-p005.json") == 5
-        assert vision2md.page_from_name("197-abc.json") == 197
+        # 裸 197-abc 落不到任何规则 → 0（宁可没有页码，也不猜错）
+        assert vision2md.page_from_name("197-abc.json") == 0
         # 手机图的 id 不能被当页码（老写法会取前三位得到 197）
         assert vision2md.page_from_name("19743.json") == 0
         assert vision2md.page_from_name("19743-mark.json") == 0
+        # 真实管线会给输入加序号前缀（kaogong-ocr.sh 把输入重命名成 "001-原名"）。
+        # 不剥前缀的话 PAGE_PREFIX 会命中**序号**：实测 001-197-abc → 1、001-IMG_19743 → 1。
+        # （最早只测裸名，所以没抓到 —— 这组用例就是补这个缺口。）
+        assert vision2md.page_from_name("001-197-abc.json") == 197
+        assert vision2md.page_from_name("002-198-def.json") == 198
+        assert vision2md.page_from_name("001-IMG_19743.json") == 0
+        assert vision2md.page_from_name("003-讲义-p005.json") == 5
 
         # ── 表格检测：判据与坐标都取自真页面 jc2-p10（刑法分则·单位犯罪那页）──
         # 表格行 = 左侧短标签 + 右侧长内容、y 区间重叠
