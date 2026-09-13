@@ -7,7 +7,10 @@
 # 校对后的版本由人/模型写到 考公/<模块>/。
 set -euo pipefail
 BIN="${HOME}/.pi/bin"
-VAULT="${HOME}/Documents/Obsidian Vault/考公"
+# vault 路径必须从 paths.py 取 —— 它是唯一来源。
+# 这个脚本原来自己拼了一遍，于是 KAOGONG_VAULT 对它无效：
+# 压力测试时 60 页机器产物直接写进了真库（实测踩到）。
+VAULT="$(python3 -c "import sys; sys.path.insert(0, '$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)'); from pipeline.paths import VAULT_ROOT; print(VAULT_ROOT)" 2>/dev/null || echo "${HOME}/Documents/Obsidian Vault/考公")"
 SOURCE="未命名讲义"
 MODULE="_inbox"
 START=1
@@ -179,10 +182,10 @@ fi
 # 而置信度信号看不出来（中文常给 0.5 整值）。实测一页漏了约 1/3 内容。
 tbl=$(grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | wc -l | tr -d ' ')
 if [ "${tbl:-0}" -gt 0 ]; then
-echo "  ⚠️ 有 $tbl 页检出表格：Vision 会压平表格、可能漏内容，校准这页务必对着原图逐段核" >&2
-grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | while read -r f; do
-printf '      %s（表格行约 %s）\n' "$(basename "$f")" "$(grep -m1 '^table_rows:' "$f" | sed 's/.*: *//')" >&2
-done
+  echo "  ⚠️ 有 $tbl 页检出表格：Vision 会压平表格、可能漏内容，校准这页务必对着原图逐段核" >&2
+  grep -l '^table: true' "$OUT/${SOURCE_SAFE}-p"*.md 2>/dev/null | while read -r f; do
+    printf '      %s（表格行约 %s）\n' "$(basename "$f")" "$(grep -m1 '^table_rows:' "$f" | sed 's/.*: *//')" >&2
+  done
 fi
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
 # 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
