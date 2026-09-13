@@ -153,7 +153,8 @@ def main():
                 "降低原有因果关系的确定性\n\n"
                 "②因果倒置：颠倒原因与结果的先后顺序，削弱力度极强\n")
         items = split.collect_items([{"page": 1, "body": body, "fm": {}}])
-        assert len(items) == 2, "应当抽到 2 条，得到 %d：%r" % (len(items), [x[2] for x in items])
+        msg = "应当抽到 2 条，得到 %d：%r" % (len(items), [x[2] for x in items])
+        assert len(items) == 2, msg
         assert "降低原有因果关系的确定性" in items[0][3], \
             "紧邻的续行必须并进同一条，实际：%r" % items[0][3]
 
@@ -171,7 +172,8 @@ def main():
         assert not dedup.is_same_page(one, other), "不同页不能判为重复"
         assert dedup.page_label(one) == "2" and dedup.page_label(other) == "1"
         match = dedup.find_match(one, [("老页.md", worse), ("别的页.md", other)])
-        assert match and match[0] == "老页.md", "匹配结果不对：%r" % (match,)
+        msg = "匹配结果不对：%r" % (match,)
+        assert match and match[0] == "老页.md", msg
         # 页码相同可以放宽阈值（重拍糊了 OCR 出人较多）
 
 
@@ -251,7 +253,8 @@ def main():
         # 另一个候选分数更高，但它不是同一页（页码不同、文字也不同）
         decoy = "第7页 " + "四、归因论证常见正误选项判定标准 ①话题紧扣原因：选项始终围绕题干成因展开。"
         hit = dedup.find_match(candidate, [("诱饵.md", decoy), ("老的.md", noisy)])
-        assert hit and hit[0] == "老的.md", "页码相同的那页应当被捞回来，实际 %r" % (hit,)
+        msg = "页码相同的那页应当被捞回来，实际 %r" % (hit,)
+        assert hit and hit[0] == "老的.md", msg
 
 
 
@@ -287,7 +290,8 @@ def main():
         for args in (["push", "--dry"], ["due"], ["stats"]):
             result = subprocess.run([sys.executable, "pipeline/review.py"] + args,
                                     capture_output=True, text=True, cwd=ROOT, timeout=60)
-            assert result.returncode == 0, "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
+            msg = "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
+            assert result.returncode == 0, msg
 
 
 
@@ -375,7 +379,8 @@ def main():
         from pipeline import classify
         expected = {1: "B", 2: "C", 3: "D", 4: "A", 5: "B"}
         for text in ("1-5 BCDAB", "1~5 BCDAB", "1—5 BCDAB", "１－５ ＢＣＤＡＢ"):
-            assert classify.parse_answer_key(text) == expected, "%r 解析不对：%s" % (text, classify.parse_answer_key(text))
+            msg = "%r 解析不对：%s" % (text, classify.parse_answer_key(text))
+            assert classify.parse_answer_key(text) == expected, msg
         single = classify.parse_answer_key("1. B" + chr(10) + "2．C" + chr(10) + "3、D")
         assert single == {1: "B", 2: "C", 3: "D"}, single
         assert classify.parse_answer_key("") == {}, "空文本该返回空表"
@@ -398,7 +403,8 @@ def main():
         ]
         for student, correct, want in cases:
             got = answers.judge(student, correct)
-            assert got == want, "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
+            msg = "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
+            assert got == want, msg
 
 
     def _suspect_lines_test():

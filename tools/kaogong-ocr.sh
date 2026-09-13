@@ -173,7 +173,7 @@ if [ -n "$WITH_MARKS" ]; then
   for extra in "$TMP"/*-marks.jpg "$TMP"/*-marks.txt; do
     [ -f "$extra" ] && cp "$extra" "$OUT/marks/"
   done
-  echo "  红笔层 → $OUT/marks/"
+  echo "  笔迹层（红/蓝/彩色） → $OUT/marks/"
 fi
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
 # 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
