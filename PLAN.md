@@ -482,6 +482,10 @@ vault   front-matter/快照    review / mistake / split 三个命令行
 
 ---
 
+**待建部分（错题与知识点的自动分类）见 [docs/classify-plan.md](docs/classify-plan.md)。**
+
+---
+
 **一句话**：拍完发我 → 0.7 秒出 markdown → 我对着原图校准 → 进 Obsidian。
 复习：FSRS + 考试日反推首轮 12 天 + 每天早上 08:00 推 + 语义相近的考点错开排。
 错题按**错因**分流；掌握用**变式 + 迁移 + 保持**三关验证。
