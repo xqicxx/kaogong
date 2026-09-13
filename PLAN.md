@@ -509,4 +509,3 @@ vault   front-matter/快照    review / mistake / split 三个命令行
 
 实测三张照片：全部判为重复（0.81 / 0.54 / 0.78），vault 零改动；
 关掉去重的对照则写出 3 页（含一张重复）。
-
