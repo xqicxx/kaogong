@@ -36,6 +36,11 @@ HANDOUT_MARK = re.compile(
     r"|\d+[.、]\S)\s*\S"                                # 1.含义（讲义小标题）
 )
 # 题号：1. / 1、 / 1． / 1) / 第1题
+# 「题干的味道」—— 用来把「讲义条目（术语：解释）」和「丢了选项的题目（题干）」分开。
+# 只认真正的试题措辞：讲义的解释里「正确」「错误」到处都是，不能拿单词当判据。
+QUESTION_HINT = re.compile(
+    r"下列|以下(?:哪|哪项|哪一项|说法)|何者|哪一项|正确的是|错误的是|不正确的是"
+    r"|不属于|最能|试述|简述|[？?]\s*$")
 QUESTION_START = re.compile(r"^\s*(?:第\s*(\d{1,3})\s*题|(\d{1,3})\s*[.、．)）])(?=\s*\S)")
 # 选项行：A. / A、 / A． / A)
 OPTION_LINE = re.compile(r"^\s*([A-Da-dＡ-Ｄａ-ｄ])\s*[.、．)）](?=\s*\S)")
@@ -112,7 +117,7 @@ def classify_page(text):
     # 讲义小标题短、题干长 —— 用长度当第二判据，
     # 免得把「选项 OCR 丢了」的题目页错判成讲义（那批页面本该报 unknown 让用户确认）
     numbered = [line.strip() for line in plain if QUESTION_START.match(line) or HANDOUT_MARK.match(line)]
-    heading_like = sum(1 for line in numbered if len(line) <= 20)
+    heading_like = sum(1 for line in numbered if len(line) <= 20)   # 仍用于统计，判据已改用题干标志词
 
     if ANSWER_MARK.search(body[:400]) and question_count <= max(2, option_count):
         return ANSWERS
@@ -124,14 +129,15 @@ def classify_page(text):
     # 只看编号会把讲义误判成题目；而题目一定有 A/B/C/D 选项，讲义没有。
     if option_count >= 2 and question_count >= 2:
         return QUESTIONS
-    # 讲义：编号行必须**全是**短标题（真讲义的层级标题都短）。
-    # 只要有一条编号行长到像题干，就可能是「选项丢了」的题目页 →
-    # 报 unknown 交给用户确认，不硬塞（本文件的硬规矩）。
-    # ⚠️ 别只要求「有一条短标题」—— 题目里的短题干（「2.下列说法正确的是」）就能满足。
-    all_headings = bool(numbered) and heading_like == len(numbered)
-    if handout_count >= 2 and all_headings:
+    # 讲义 vs「选项丢了的题目」怎么分？**看行有没有题干的味道**，不是看长度。
+    #
+    # 走过的弯路：先按「编号行长不长」判 —— 真讲义里「1、客观违法要件：行主体、危害行为…」
+    # 比不少题干还长，于是一片讲义被整片判成 unknown（实测 6/12 页）。
+    # 现在只认题干标志词，讲义那种「术语：解释」的条目天然躲开。
+    stem_like = sum(1 for line in numbered if QUESTION_HINT.search(line))
+    if handout_count >= 2 and stem_like == 0:
         return HANDOUT
-    if handout_count >= 1 and option_count == 0 and all_headings:
+    if handout_count >= 1 and option_count == 0 and stem_like == 0:
         return HANDOUT
     return UNKNOWN
 
