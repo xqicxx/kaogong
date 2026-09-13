@@ -660,9 +660,9 @@ def main():
 
         def _heading():
             chapter = {"text": "第一章 逻辑论证之归因论证", "h": 0.03, "w": 0.5}
-            assert module.heading_level(chapter, 0.02, 1.0) == 1, "章标题应为 1 级"
+            assert module.heading_level(chapter, 0.02) == 1, "章标题应为 1 级"
             long_body = {"text": "这是一段很长的正文，写了很多字，不应该是标题也不该被当成标题处理", "h": 0.02, "w": 0.9}
-            assert module.heading_level(long_body, 0.02, 1.0) == 0, "长正文不能判成标题"
+            assert module.heading_level(long_body, 0.02) == 0, "长正文不能判成标题"
 
         check("vision2md 噪声过滤", _noise)
         check("vision2md 标题判定", _heading)

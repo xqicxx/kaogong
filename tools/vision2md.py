@@ -21,6 +21,7 @@ import sys
 # abspath 不跟随软链，会算出 ~/.pi 而不是仓库根
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from pipeline import dedup  # type: ignore[import]  # noqa: E402
+from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 
 
 def safe_int(value, default):
@@ -73,12 +74,15 @@ def load(path):
     try:
         raw_text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise SystemExit("读不到 OCR 结果 %s：%s" % (path, exc))
+        # 抛领域异常而不是 SystemExit：库函数抛 SystemExit 的话，
+        # 调用方除了退出没别的选择（测试里也接不住），违反项目约定「库抛 KaogongError，
+        # 只有 main() 翻成退出码」。
+        raise KaogongError("读不到 OCR 结果 %s：%s" % (path, exc))
     try:
         parsed = json.loads(raw_text)
     except ValueError as exc:
-        raise SystemExit("OCR 结果不是合法 JSON（%s）：%s —— 上游 vision-ocr 是不是失败了？"
-                         % (path, exc))
+        raise KaogongError("OCR 结果不是合法 JSON（%s）：%s —— 上游 vision-ocr 是不是失败了？"
+                           % (path, exc))
     lines = [line for line in (normalize_line(item) for item in parsed.get("lines", []))
              if line]
     lines.sort(key=lambda item: (item["y"], item["x"]))
@@ -104,7 +108,7 @@ def batch_noise(pages, band=0.085, ratio=0.6, min_pages=2):
             if not (l["y"] < band or l["y"] > 1 - band):
                 continue
             t = l["text"].strip()
-            if len(t) > 40 or heading_level(l, med_h, 1.0):
+            if len(t) > 40 or heading_level(l, med_h):
                 continue
             seen.add(t)
         per_page.append(seen)
@@ -153,8 +157,12 @@ def is_noise(line, noise):
     return False
 
 
-def heading_level(line, med_h, col_w):
-    """返回 0（不是标题）或 1-4。模式为主，几何佐证。"""
+def heading_level(line, med_h):
+    """返回 0（不是标题）或 1-4。模式为主，几何佐证。
+
+    几何只看行高（比中位行高出一截就是「像标题」）。
+    以前签名里还有个 col_w —— 传进来了但函数体从没读过它（死参数），删掉。
+    """
     t = line["text"].strip()
     tall = line["h"] > med_h * 1.18
     bare = not t.endswith(("。", "！", "？", "；", "：", "，"))
@@ -182,7 +190,7 @@ def build_blocks(lines, med_h, col_w):
     blocks = []
     for ln in lines:
         t = ln["text"].strip()
-        lvl = heading_level(ln, med_h, col_w)
+        lvl = heading_level(ln, med_h)
         if lvl:
             blocks.append(["h", lvl, t])
             continue
@@ -310,6 +318,15 @@ def dedup_pages(pages, out_dir, threshold):
 
 
 def main():
+    # 领域异常统一在这里翻成退出码（与 review / mistake / classify 一致）
+    try:
+        run()
+    except KaogongError as exc:
+        print("  ✗ %s" % exc, file=sys.stderr)
+        sys.exit(1)
+
+
+def run():
     ap = argparse.ArgumentParser()
     ap.add_argument("jsons", nargs="+")
     ap.add_argument("--source", default="untitled")
@@ -337,7 +354,11 @@ def main():
         # 页号跟“输入里的第几张”走，而不是“成功处理的第几张”——
         # 中间有一张失败时，后者会把后面的页整体往前挪一位
         matched = PAGE_PREFIX.match(Path(pg["path"]).stem)
-        page_no = (args.start_page + int(matched.group(1)) - 1) if matched else (args.start_page + i)
+        # PAGE_PREFIX 只匹配三位数字，理论上不会解析失败；但页号算错会让整份笔记的
+        # 页码整体错位，所以仍旧走 safe_int —— 解析不出来就退回「按输入顺序编号」，
+        # 与没有页码前缀时同一套逻辑。
+        page_no = (args.start_page + safe_int(matched.group(1), i + 1) - 1
+                   if matched else args.start_page + i)
         md, chars = page_to_md(pg, noise, args.source, page_no, args.low_conf)
         total += chars
         if args.stdout:
