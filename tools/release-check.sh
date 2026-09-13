@@ -5,7 +5,13 @@
 #
 # 退出码非零 = 不能上线。任何一项失败都会说清楚是哪一项。
 set -uo pipefail
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+# cd 失败必须当场退出：这个脚本用的是 set -uo pipefail（故意不加 -e，因为要跑完所有检查
+# 再汇总），所以 cd 失败不会中止，脚本会继续在**别的目录**里做检查 ——
+# 那可能对着空气报「可以上线」。门禁自己不能有这种洞。
+cd "$(cd "$(dirname "$0")/.." && pwd -P)" || {
+  echo "  ✗ 进不到仓库根，门禁没法跑" >&2
+  exit 1
+}
 VAULT="$HOME/Documents/Obsidian Vault/考公"
 BIN="$HOME/.pi/bin"
 PLIST="$HOME/Library/LaunchAgents/com.kaogong.review.plist"
@@ -104,8 +110,8 @@ else
 fi
 
 section "7. 仓库卫生"
-git_status=$(git status --porcelain 2>&1)
-if [ $? -ne 0 ]; then
+# 直接判命令成败，不要用 $? —— 它指的是「上一条命令」，中间插一行就会变味
+if ! git_status=$(git status --porcelain 2>&1); then
   fail "git status 跑不了：$git_status"
 elif [ -n "$git_status" ]; then
   fail "有未提交的改动"
@@ -130,6 +136,19 @@ else
   else
     pass "没有密钥文件，也没扫到硬编码 key"
   fi
+fi
+
+section "8. shell 静态检查"
+if command -v shellcheck >/dev/null 2>&1; then
+  # 只卡 error/warning：style 级别的偏好不该拦上线
+  if shellcheck -S warning tools/*.sh; then
+    pass "shellcheck 无 error / warning"
+  else
+    fail "shellcheck 有发现（见上面输出）"
+  fi
+else
+  # 没装就明说跳过了，不要假装通过
+  echo "  - 没装 shellcheck，跳过（brew install shellcheck）"
 fi
 
 section "结果"
