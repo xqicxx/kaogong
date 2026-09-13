@@ -127,8 +127,12 @@ def find_match(candidate_text, existing, threshold=DEFAULT_THRESHOLD):
     scored = []
     for name, text in existing:
         size = len(CJK.findall(text))
-        if target and size and (max(target, size) / max(1, min(target, size))) > 1.6:
-            continue                           # 长度差一倍半以上，不可能同页
+        ratio = (max(target, size) / max(1, min(target, size))) if target and size else 1.0
+        # 长度差太多通常不是同一页；但两边页脚页码一样时仍要给页码旁证一次机会
+        # （重拍糊了的那页 OCR 可能少一大截，长度预筛会把它直接判死）
+        if ratio > 1.6 and not (page_label(candidate_text)
+                                and page_label(candidate_text) == page_label(text)):
+            continue
         scored.append((similarity(candidate_text, text), name, text))
     for score, name, text in sorted(scored, key=lambda item: -item[0]):
         if is_same_page(candidate_text, text, threshold):

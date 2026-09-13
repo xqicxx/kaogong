@@ -30,7 +30,9 @@ def _snapshot(path):
             return
         today = date.today().isoformat()
         dest_dir = BACKUP_DIR / today
-        dest = dest_dir / path.name
+        # 按完整路径拍平命名：只用 path.name 的话，不同目录下的同名文件会撞，
+        # 后一个的快照被静默跳过（等于没备份）
+        dest = dest_dir / str(path).lstrip("/").replace("/", "__")
         if dest.exists():
             return
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -39,8 +41,10 @@ def _snapshot(path):
         for old in BACKUP_DIR.iterdir():
             if old.is_dir() and old.name < cutoff:
                 shutil.rmtree(old, ignore_errors=True)
-    except OSError:
-        pass          # 备份失败不该挡住正常写入
+    except OSError as exc:
+        # 备份失败不该挡住正常写入，但也不能一声不响
+        import sys as _sys
+        print("  ⚠️ 快照失败（继续写入）：%s" % exc, file=_sys.stderr)
 
 
 def split(text):

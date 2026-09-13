@@ -82,6 +82,11 @@ def advance(state, kind, passed, today=None, stability=12.0):
         "保持测试": state.get("保持测试") or "",       # 不能把 None 写进卡片
     }
 
+    if kind == "变式" and passed and current == "已掌握":
+        # 已掌握的卡偶尔再过一道变式，答对了不该降回「变式中」——
+        # 「失败退一级」是惩罚，答对没道理受罚
+        result["状态"] = "已掌握"
+        return result
     if kind == "变式":
         result["保持测试"] = ""                  # 回到变式关，说明还没到保持阶段
         if passed:

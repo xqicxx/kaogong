@@ -48,10 +48,12 @@ def build_message(limit, today=None):
     """返回 (消息文本, 本次推送的卡片列表)。列表顺序就是回分用的编号顺序。"""
     today = today or date.today()
     everything = all_cards()                 # 整个 vault 只扫一次
-    fresh, due = [], []
+    fresh, due, broken = [], [], []
     for card in everything:
         state = card["state"]
-        if not state or state["reps"] == 0:
+        if card.get("health") == "broken":
+            broken.append(card)          # 排期字段坏了：既不算新卡也不算到期
+        elif not state or state["reps"] == 0:
             fresh.append(card)
         elif state["due"] <= today:
             due.append(card)
@@ -100,6 +102,9 @@ def build_message(limit, today=None):
     if deferred:
         lines += ["（为防混淆，今日暂缓 %d 张近义考点：%s）"
                   % (len(deferred), "、".join(md_safe(c["path"].stem) for c in deferred[:3])), ""]
+    if broken:
+        lines += ["**⚠️ 排期字段坏了（已跳过，不影响今天的复习）**", ""]
+        lines += ["  ".join(md_safe(c["path"].stem) for c in broken[:5]), ""]
     if pending:
         lines += ["**🧪 待验证（掌握三关）**", ""]
         for card in pending[:5]:
@@ -156,6 +161,10 @@ def cmd_push(args):
 
 def cmd_grade(args):
     card = by_index(args.card) if str(args.card).isdigit() else find(args.card)
+    if card.get("health") == "broken":
+        # 坏卡当新卡评分 = 用初始值覆盖真实复习历史
+        raise KaogongError("这张卡的排期字段读不出来（手改坏过？），先修好再评分：%s"
+                           % card["path"].stem)
     if card["path"].stem != args.card and not str(args.card).isdigit():
         print("  （按「%s」匹配到 %s）" % (args.card, card["path"].stem))
     # FSRS-4.5 里同日重复评分几乎不改变稳定度（R(0)=1 → 增量因子为 0），

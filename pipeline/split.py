@@ -219,8 +219,10 @@ def main():
             # 卡片已经存在 → 不动它。里面可能已经有复习历史，
             # 重切一次就把它清零是数据损失（这条是 code review 抓出来的）。
             old_fm, _, _ = vault.read(p)
-            owner = (old_fm.get("所属小节") or "").strip()
-            if owner and args.lecture not in owner:
+            # 必须比双链目标，不能用子串：「判断」会命中「[[判断推理-加强]]」，
+            # 于是不同讲义的卡片被当成同一张、静默跳过
+            owner = _link_target(old_fm.get("所属小节"))
+            if owner and owner != args.lecture:
                 # 考点目录是平铺的：不同讲义出现同名考点时会撞车
                 skipped.append("%s（现属于 %s）" % (name, owner))
             else:

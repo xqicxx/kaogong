@@ -80,418 +80,425 @@ def run_cli(args):
 
 
 # ---------- 1. 模块内部自检 ----------
-print("模块自检")
-check("vault 解析/写入", vault.selftest)
-check("review 排期", lambda: review.cmd_selftest(None))
-check("mistake 状态机", lambda: mistake.cmd_selftest(None))
-
-
-# ---------- 2. 纯函数边界用例 ----------
-print("\n边界用例")
-
-
-def _vault_edges():
-    assert vault.merge_front_matter("", {"a": "1"}) == "a: 1"
-    _, body, raw = vault.split("---\na: 1\n---\n\n正文")
-    assert body == "正文" and "a: 1" in raw
-    assert vault.split("没有 front-matter")[2] == "", "没有 front-matter 时 raw 必须是空字符串"
-    assert vault.split("---\na: 1\n")[0] == {}, "缺闭合分隔符应当作没有 front-matter"
-    assert vault.safe_int("x", 7) == 7 and vault.safe_float(None, 2.5) == 2.5
-    lines = vault.merge_front_matter("\n\na: 1\n\n", {"a": "2"}).splitlines()
-    assert len(lines) == 1, "首尾空行不该带进来，得到 %r" % lines
-
-
-def _md_escape():
-    escaped = review.md_safe("a_b*c[d]e`f")
-    for ch in "_*[]":
-        assert review.md_safe(ch) == chr(92) + ch, "%s 必须转义" % ch
-    assert chr(92) + chr(96) in escaped, "反引号也要转义"
-
-
-def _schedule_edges():
-    today = date(2026, 9, 13)
-    state = fsrs.schedule(None, 3, today)
-    for grade in (1, 2, 3, 4):
-        nxt = fsrs.schedule(state, grade, state["due"])
-        assert 1 <= nxt["d"] <= 10, "难度必须夹在 [1,10]，得到 %s" % nxt["d"]
-        assert nxt["due"] > state["due"], "下次到期必须往后走"
-        assert nxt["reps"] == state["reps"] + 1
-    assert fsrs.r_of(0, 10) > fsrs.r_of(100, 10), "R 必须随时间下降"
-
-
-def _mastery_gates():
-    today = date(2026, 9, 13)
-    for kind in ("迁移", "保持"):
-        expect_raises(ValueError,
-                      lambda k=kind: mistake.advance({"状态": "未掌握"}, k, True, today),
-                      "未掌握不能直接考 %s 关" % kind)
-    state = mistake.advance({"状态": "未掌握"}, "变式", True, today)
-    expect_raises(ValueError, lambda: mistake.advance(state, "迁移", True, today),
-                  "变式只赢 1 次不能考迁移关")
-    state = mistake.advance(state, "变式", True, today)
-    assert state["状态"] == "迁移中", state
-    assert mistake.advance(state, "迁移", True, today)["状态"] == "待保持"
-    # 失败要退级，且不留下旧的已通过标记
-    failed = mistake.advance(state, "变式", False, today)
-    assert failed["状态"] == "变式中" and failed["保持测试"] == "", failed
-
-
-def _naming():
-    assert split.safe_name("") == "未命名" and split.safe_name("///") == "未命名"
-    assert "/" not in split.safe_name("A/B") and ":" not in split.safe_name("A:B")
-
-
-def _item_continuation():
-    body = ("### 三种削弱（质疑）方式\n\n"
-            "①另有他因：引入题干未提及的其他影响因素，\n"
-            "降低原有因果关系的确定性\n\n"
-            "②因果倒置：颠倒原因与结果的先后顺序，削弱力度极强\n")
-    items = split.collect_items([{"page": 1, "body": body, "fm": {}}])
-    assert len(items) == 2, "应当抽到 2 条，得到 %d：%r" % (len(items), [x[2] for x in items])
-    assert "降低原有因果关系的确定性" in items[0][3], \
-        "紧邻的续行必须并进同一条，实际：%r" % items[0][3]
-
-
-
-
-def _page_dedup():
-    from pipeline import dedup
-    one = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，降低不确定性。第2页"
-    worse = "①排除他因：剔除其他潜在因素，强化题干因果关系的唯一性，降低不确定性。第2页"
-    other = "第一章 逻辑论证之归因论证 1.1 归因论证整体概述 一、归因论证定义 第1页"
-    same_score = dedup.similarity(one, worse)
-    assert same_score > 0.75, "同一页重拍应当高度相似，实测 %.3f" % same_score
-    assert dedup.is_same_page(one, worse), "同一页要判为重复"
-    assert not dedup.is_same_page(one, other), "不同页不能判为重复"
-    assert dedup.page_label(one) == "2" and dedup.page_label(other) == "1"
-    match = dedup.find_match(one, [("老页.md", worse), ("别的页.md", other)])
-    assert match and match[0] == "老页.md", "匹配结果不对：%r" % (match,)
-    # 页码相同可以放宽阈值（重拍糊了 OCR 出人较多）
-
-
-def _siblings():
-    """近义考点必须错开排期，但**绝不能被删掉**。
-
-    主判据是「分组」：同一组的条目本来就是同一套措辞的并列项，
-    实测卡背相似度 0.13-0.30；不同组只有 0.04-0.13。
-    """
-    from pipeline import dedup
-    cards = [
-        {"path": "因果倒置", "分组": "三种削弱（质疑）方式",
-         "body": "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。"},
-        {"path": "否定此因", "分组": "三种削弱（质疑）方式",
-         "body": "③否定此因：直接表明题干给出的原因不成立，切断原有因果关联，削弱力度极强。"},
-        {"path": "增长率比较", "分组": "资料分析",
-         "body": "资料分析：增长率比较要用两期比重差，先算基期量再比较，注意单位换算与量级。"},
-    ]
-    group_of = lambda card: card["分组"]
-    kept, deferred = dedup.split_siblings(cards, lambda c: c["body"], group_of=group_of)
-    kept_names = [c["path"] for c in kept]
-    deferred_names = [c["path"] for c in deferred]
-    assert len(kept) + len(deferred) == len(cards), "错开只能暂缓，不能丢卡片"
-    assert deferred_names == ["否定此因"], "同组第二张要暂缓：%r" % deferred_names
-    assert "增长率比较" in kept_names, "不同组的必须留下：%r" % kept_names
-
-    # 没有分组信息时，文本相似度兜底
-    twin_a = {"path": "A", "body": "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
-    twin_b = {"path": "B", "body": "②排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
-    kept2, deferred2 = dedup.split_siblings([twin_a, twin_b], lambda c: c["body"])
-    assert [c["path"] for c in deferred2] == ["B"],         "没分组时相似文本也要错开：相似度 %.3f" % dedup.similarity(twin_a["body"], twin_b["body"])
-
-
-
-
-def _dedup_edges():
-    """页码是硬证据；短文本不该拿相似度说事。"""
-    from pipeline import dedup
-
-    # 共用一大段版式文字、但页脚页码不同的两页 —— 相似度中等（0.45-0.85 之间）
-    shared = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事为什么会发生的"
-              "真正原因所在。做题时先看题干的分组方式，再看选项有没有回到同一组里作比较。")
-    first = "第2页 " + shared + "本页讲对比实验归因，以分组对照实验为载体推导差异产生的原因。"
-    second = "第3页 " + shared + "本页讲时间对比归因，以过去和现在两个时间维度对照状态变化。"
-    score = dedup.similarity(first, second)
-    assert 0.45 <= score < dedup.STRONG_THRESHOLD,         "这条用例要覆盖“页码否决”的那一段，当前相似度 %.3f 不在区间内" % score
-    assert not dedup.is_same_page(first, second),         "页码明确不同且文字只是中等相似（%.3f）时不能判为同一页" % score
-
-    # 页码被 OCR 读错、但文字几乎一致 → 仍应判为同一页
-    long_same = "第2页 " + "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。" * 3
-    assert dedup.is_same_page(long_same, long_same.replace("第2页", "第！页")),         "页码读错但文字几乎一致，仍应判为同一页"
-
-    short = [{"body": "完全不同的内容 A"}, {"body": "完全不同的内容 B"}]
-    _kept, deferred = dedup.split_siblings(short, lambda c: c["body"])
-    assert not deferred, "太短的正文不该由相似度触发错开"
-
-    assert dedup.page_label("第 12 页") == "12" and dedup.page_label("没有页码") == ""
-
-
-
-
-def _dedup_rescue():
-    """相似度不高、但页码相同的候选，也要被捞回来。
-
-    起因：旧实现只验“相似度最高的那个候选”，于是重拍糊了（相似度 0.3）
-    但页码对得上的那页会被丢掉，结果同一页被当成新页重新录入。
-    """
-    from pipeline import dedup
-    base = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事的"
-            "真正原因，做题时要先看题干的分组方式再回到同一组里比较选项。")
-    candidate = "第2页 " + base
-    # 同样的页码，但文字被 OCR 弄花了一部分 → 相似度中等
-    noisy = "第2页 " + "归因论证核心对已发生事实进行原因探究，文段目的是分析真正原因，做题先看分组方式再回到同组比较选项。"
-    score = dedup.similarity(candidate, noisy)
-    assert score < dedup.DEFAULT_THRESHOLD, "这条用例需要相似度低于主阈值，实测 %.3f" % score
-    assert score >= dedup.PAGE_LABEL_THRESHOLD, "又要够到页码旁证阈值，实测 %.3f" % score
-    # 另一个候选分数更高，但它不是同一页（页码不同、文字也不同）
-    decoy = "第7页 " + "四、归因论证常见正误选项判定标准 ①话题紧扣原因：选项始终围绕题干成因展开。"
-    hit = dedup.find_match(candidate, [("诱饵.md", decoy), ("老的.md", noisy)])
-    assert hit and hit[0] == "老的.md", "页码相同的那页应当被捞回来，实际 %r" % (hit,)
-
-
-
-
-def _split_smoke():
-    """光 import 不够。
-
-    split.py 曾因为一个三元组解包写错而完全跑不起来，
-    而当时的门禁只查语法和导入，照样全绿。所以这里必须真的执行一次。
-    """
-    import subprocess, sys, tempfile
-    from pathlib import Path
-    tmp = Path(tempfile.mkdtemp())
-    page = tmp / "样例-p001.md"
-    page_text = chr(10).join([
-        "---", "source: 样例", "page: 1", "---", "",
-        "### 三种削弱（质疑）方式", "",
-        "①另有他因：引入题干未提及的其他影响因素，降低原有因果关系的确定性。", "",
-        "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。", "",
-    ])
-    page.write_text(page_text, encoding="utf-8")
-    command = [sys.executable, "pipeline/split.py", "--module", "行测/判断推理",
-               "--lecture", "冒烟", "--source", "冒烟", "--dry", str(page)]
-    result = subprocess.run(command, capture_output=True, text=True, cwd=ROOT, timeout=60)
-    output = (result.stdout or "") + (result.stderr or "")
-    assert result.returncode == 0, "split.py 跑不起来：%s" % output[-400:]
-    assert "卡片" in output, "split.py 没输出卡片数：%s" % output[-200:]
-
-
-def _review_smoke():
-    """复习链路的只读命令也要真跑（--dry，不推送）。"""
-    import subprocess, sys
-    for args in (["push", "--dry"], ["due"], ["stats"]):
-        result = subprocess.run([sys.executable, "pipeline/review.py"] + args,
-                                capture_output=True, text=True, cwd=ROOT, timeout=60)
-        assert result.returncode == 0, "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
-
-
-
-
-def _card_health():
-    """坏卡必须能被认出来。
-
-    背景：state_health / broken_cards 一度是死代码（load() 忘了填 health 字段），
-    于是“字段坏了”的卡照样被当成新卡重新排期，真实复习历史被覆盖。
-    这个用例同时钉住 state_health 与 load() 的字段连线。
-    """
-    import tempfile
-    from pathlib import Path
-    from pipeline import cards, vault
-    good = "---\ntype: 考点\n到期: 2026-09-25\n稳定度: 12\n难度: 5\n复习次数: 1\n上次复习: 2026-09-13\n---\n\n正文\n"
-    broken = "---\ntype: 考点\n到期: 不是日期\n稳定度: abc\n难度: 5\n---\n\n正文\n"
-    fresh = "---\ntype: 考点\n状态: 未掌握\n---\n\n正文\n"
-    tmp = Path(tempfile.mkdtemp())
-    results = {}
-    for name, text in (("好卡", good), ("坏卡", broken), ("新卡", fresh)):
-        target = tmp / (name + ".md")
-        target.write_text(text, encoding="utf-8")
-        front_matter, _body, _raw = vault.read(target)
-        results[name] = cards.state_health(front_matter)
-    assert results["好卡"] == "ok", results
-    assert results["坏卡"] == "broken", "坏卡没被认出来：%r" % results
-    assert results["新卡"] == "none", results
-    # load() 必须真的把 health 带上，否则 broken_cards() 永远是空
-    target = tmp / "坏卡.md"
-    loaded = cards.load(target)
-    assert loaded.get("health") == "broken", "load() 没带 health：%r" % loaded.get("health")
-
-
-check("卡片健康度", _card_health)
-
-
-PAGE_QUESTIONS = chr(10).join([
-    "1. 甲伤害乙，乙冠心病发作死亡。甲的行为与死亡结果之间：",
-    "A. 无因果关系    B. 有因果关系",
-    "C. 视情况而定    D. 无法判断",
-    "",
-    "2. 关于介入因素，下列说法正确的是：",
-    "A. 介入因素必然中断因果关系",
-    "B. 介入因素异常且独立引起结果时中断",
-])
-PAGE_HANDOUT = chr(10).join([
-    "第一章 逻辑论证之归因论证",
-    "一、归因论证定义",
-    "归因论证的核心，是对已发生的既定事实进行原因探究。",
-    "（一）三类常规结构通用方法",
-    "本部分内容适用于对比实验归因。",
-])
-PAGE_ANSWERS = chr(10).join([
-    "参考答案与解析",
-    "1. B",
-    "2. D",
-    "3. ABD",
-])
-
-
-def _classify_pages():
-    from pipeline import classify
-    assert classify.classify_page(PAGE_QUESTIONS) == classify.QUESTIONS, "题目页没认出来"
-    assert classify.classify_page(PAGE_HANDOUT) == classify.HANDOUT, "讲义页没认出来"
-    assert classify.classify_page(PAGE_ANSWERS) == classify.ANSWERS, "答案页没认出来"
-    assert classify.classify_page("随便一段话") == classify.UNKNOWN, "乱内容应当判 unknown"
-    # 全角是 OCR 的常态，不能因此漏整页
-    fullwidth = "１． 题干一" + chr(10) + "Ａ． 选项甲" + chr(10) + "２． 题干二" + chr(10) + "Ｂ． 选项乙"
-    assert classify.classify_page(fullwidth) == classify.QUESTIONS, "全角题目页没认出来"
-
-
-def _split_questions():
-    from pipeline import classify
-    questions = classify.split_questions(PAGE_QUESTIONS)
-    assert len(questions) == 2, "应当切出 2 道题，得到 %d" % len(questions)
-    assert questions[0]["number"] == 1 and questions[1]["number"] == 2
-    # 题干不能丢字：题号模式里多一个 \S 就会把首字吃掉
-    assert questions[0]["stem"].startswith("甲伤害乙"), "题干首字被吃了：%r" % questions[0]["stem"][:6]
-    # 同一行四个选项也要全抽出来
-    assert len(questions[0]["options"]) == 4, "同行选项没抽全：%r" % questions[0]["options"]
-    assert questions[1]["options"][1].startswith("介入因素异常"), questions[1]["options"]
-
-
-def _answer_key_formats():
-    from pipeline import classify
-    expected = {1: "B", 2: "C", 3: "D", 4: "A", 5: "B"}
-    for text in ("1-5 BCDAB", "1~5 BCDAB", "1—5 BCDAB", "１－５ ＢＣＤＡＢ"):
-        assert classify.parse_answer_key(text) == expected, "%r 解析不对：%s" % (text, classify.parse_answer_key(text))
-    single = classify.parse_answer_key("1. B" + chr(10) + "2．C" + chr(10) + "3、D")
-    assert single == {1: "B", 2: "C", 3: "D"}, single
-    assert classify.parse_answer_key("") == {}, "空文本该返回空表"
-
-
-def _judge_answers():
-    from pipeline import answers
-    cases = [
-        ("B", "B", answers.RIGHT),
-        ("b", "Ｂ", answers.RIGHT),          # 全角/大小写不算错
-        ("选 B", "B", answers.RIGHT),        # 手写常见噪声
-        ("DBA", "ABD", answers.RIGHT),        # 多选顺序无关
-        ("AB", "ABD", answers.WRONG),         # 少选算错
-        ("B", "D", answers.WRONG),
-        ("√", "正确", answers.RIGHT),         # 判断题
-        ("×", "错误", answers.RIGHT),
-        ("", "B", answers.UNKNOWN),          # 没作答 → 待定，不能猜
-        ("不会", "B", answers.UNKNOWN),
-        ("B", "", answers.UNKNOWN),
-    ]
-    for student, correct, want in cases:
-        got = answers.judge(student, correct)
-        assert got == want, "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
-
-
-check("页面分类", _classify_pages)
-check("题目切分", _split_questions)
-check("答案表解析", _answer_key_formats)
-check("判对错", _judge_answers)
-check("split 冒烟", _split_smoke)
-check("复习链路冒烟", _review_smoke)
-check("去重捞回", _dedup_rescue)
-check("去重边界", _dedup_edges)
-check("页面去重", _page_dedup)
-check("近义错开", _siblings)
-
-check("vault 边界", _vault_edges)
-def _domain_errors():
-    from pipeline import cards
-    try:
-        cards.find("根本不存在的卡片xyz")
-    except errors.CardNotFound:
-        pass
-    else:
-        raise AssertionError("找不到卡片要抛 CardNotFound")
-    try:
-        cards.find("支持")
-    except errors.AmbiguousCard:
-        pass
-    else:
-        raise AssertionError("模糊命中多张要抛 AmbiguousCard")
-    try:
-        fsrs.schedule(None, 9)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("非法评分要抛 ValueError")
-
-
-check("领域异常", _domain_errors)
-check("Markdown 转义", _md_escape)
-check("排期边界", _schedule_edges)
-check("三关闸门", _mastery_gates)
-check("文件命名", _naming)
-check("条目续行", _item_continuation)
-
-if vision2md is None:
-    print("  - vision2md 未加载（跳过页面解析用例）")
-else:
-    module = vision2md
-
-    def _noise():
-        page_number = {"text": "第2页", "y": 0.95, "h": 0.02}
-        header = {"text": "关注“花生十三”公众号，每日图推、类比、速算等", "y": 0.04, "h": 0.02}
-        brand = {"text": "四海公章", "y": 0.05, "h": 0.02}
-        logo = {"text": "CTHAIGONG KAO", "y": 0.06, "h": 0.02}
-        body = {"text": "①另有他因：引入题干未提及的其他影响因素", "y": 0.5, "h": 0.02}
-        short_body = {"text": "第2条规则", "y": 0.5, "h": 0.02}
-        checks = [
-            (module.is_noise(page_number, set()), "页码要当噪声"),
-            (module.is_noise(header, {header["text"]}), "批内识别出的页眉要当噪声"),
-            (module.is_noise(header, set()), "单页时页眉里的公众号行也要丢"),
-            (module.is_noise(brand, set()), "页眉带里的短品牌名要丢"),
-            (module.is_noise(logo, set()), "商标英文行要丢"),
-            (not module.is_noise(body, set()), "正文不能被当噪声"),
-            (not module.is_noise(short_body, set()), "正文里的“第X条”不能被误删"),
+def main():
+    """跑完全部检查并汇总。包在 main 里：导入这个模块不该执行子进程。"""
+    print("模块自检")
+    check("vault 解析/写入", vault.selftest)
+    check("review 排期", lambda: review.cmd_selftest(None))
+    check("mistake 状态机", lambda: mistake.cmd_selftest(None))
+
+
+    # ---------- 2. 纯函数边界用例 ----------
+    print("\n边界用例")
+
+
+    def _vault_edges():
+        assert vault.merge_front_matter("", {"a": "1"}) == "a: 1"
+        _, body, raw = vault.split("---\na: 1\n---\n\n正文")
+        assert body == "正文" and "a: 1" in raw
+        assert vault.split("没有 front-matter")[2] == "", "没有 front-matter 时 raw 必须是空字符串"
+        assert vault.split("---\na: 1\n")[0] == {}, "缺闭合分隔符应当作没有 front-matter"
+        assert vault.safe_int("x", 7) == 7 and vault.safe_float(None, 2.5) == 2.5
+        lines = vault.merge_front_matter("\n\na: 1\n\n", {"a": "2"}).splitlines()
+        assert len(lines) == 1, "首尾空行不该带进来，得到 %r" % lines
+
+
+    def _md_escape():
+        escaped = review.md_safe("a_b*c[d]e`f")
+        for ch in "_*[]":
+            assert review.md_safe(ch) == chr(92) + ch, "%s 必须转义" % ch
+        assert chr(92) + chr(96) in escaped, "反引号也要转义"
+
+
+    def _schedule_edges():
+        today = date(2026, 9, 13)
+        state = fsrs.schedule(None, 3, today)
+        for grade in (1, 2, 3, 4):
+            nxt = fsrs.schedule(state, grade, state["due"])
+            assert 1 <= nxt["d"] <= 10, "难度必须夹在 [1,10]，得到 %s" % nxt["d"]
+            assert nxt["due"] > state["due"], "下次到期必须往后走"
+            assert nxt["reps"] == state["reps"] + 1
+        assert fsrs.r_of(0, 10) > fsrs.r_of(100, 10), "R 必须随时间下降"
+
+
+    def _mastery_gates():
+        today = date(2026, 9, 13)
+        for kind in ("迁移", "保持"):
+            expect_raises(ValueError,
+                          lambda k=kind: mistake.advance({"状态": "未掌握"}, k, True, today),
+                          "未掌握不能直接考 %s 关" % kind)
+        state = mistake.advance({"状态": "未掌握"}, "变式", True, today)
+        expect_raises(ValueError, lambda: mistake.advance(state, "迁移", True, today),
+                      "变式只赢 1 次不能考迁移关")
+        state = mistake.advance(state, "变式", True, today)
+        assert state["状态"] == "迁移中", state
+        assert mistake.advance(state, "迁移", True, today)["状态"] == "待保持"
+        # 失败要退级，且不留下旧的已通过标记
+        failed = mistake.advance(state, "变式", False, today)
+        assert failed["状态"] == "变式中" and failed["保持测试"] == "", failed
+
+
+    def _naming():
+        assert split.safe_name("") == "未命名" and split.safe_name("///") == "未命名"
+        assert "/" not in split.safe_name("A/B") and ":" not in split.safe_name("A:B")
+
+
+    def _item_continuation():
+        body = ("### 三种削弱（质疑）方式\n\n"
+                "①另有他因：引入题干未提及的其他影响因素，\n"
+                "降低原有因果关系的确定性\n\n"
+                "②因果倒置：颠倒原因与结果的先后顺序，削弱力度极强\n")
+        items = split.collect_items([{"page": 1, "body": body, "fm": {}}])
+        assert len(items) == 2, "应当抽到 2 条，得到 %d：%r" % (len(items), [x[2] for x in items])
+        assert "降低原有因果关系的确定性" in items[0][3], \
+            "紧邻的续行必须并进同一条，实际：%r" % items[0][3]
+
+
+
+
+    def _page_dedup():
+        from pipeline import dedup
+        one = "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，降低不确定性。第2页"
+        worse = "①排除他因：剔除其他潜在因素，强化题干因果关系的唯一性，降低不确定性。第2页"
+        other = "第一章 逻辑论证之归因论证 1.1 归因论证整体概述 一、归因论证定义 第1页"
+        same_score = dedup.similarity(one, worse)
+        assert same_score > 0.75, "同一页重拍应当高度相似，实测 %.3f" % same_score
+        assert dedup.is_same_page(one, worse), "同一页要判为重复"
+        assert not dedup.is_same_page(one, other), "不同页不能判为重复"
+        assert dedup.page_label(one) == "2" and dedup.page_label(other) == "1"
+        match = dedup.find_match(one, [("老页.md", worse), ("别的页.md", other)])
+        assert match and match[0] == "老页.md", "匹配结果不对：%r" % (match,)
+        # 页码相同可以放宽阈值（重拍糊了 OCR 出人较多）
+
+
+    def _siblings():
+        """近义考点必须错开排期，但**绝不能被删掉**。
+
+        主判据是「分组」：同一组的条目本来就是同一套措辞的并列项，
+        实测卡背相似度 0.13-0.30；不同组只有 0.04-0.13。
+        """
+        from pipeline import dedup
+        cards = [
+            {"path": "因果倒置", "分组": "三种削弱（质疑）方式",
+             "body": "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。"},
+            {"path": "否定此因", "分组": "三种削弱（质疑）方式",
+             "body": "③否定此因：直接表明题干给出的原因不成立，切断原有因果关联，削弱力度极强。"},
+            {"path": "增长率比较", "分组": "资料分析",
+             "body": "资料分析：增长率比较要用两期比重差，先算基期量再比较，注意单位换算与量级。"},
         ]
-        for ok, why in checks:
-            verdict = bool(ok)
-            assert verdict, why
+        group_of = lambda card: card["分组"]
+        kept, deferred = dedup.split_siblings(cards, lambda c: c["body"], group_of=group_of)
+        kept_names = [c["path"] for c in kept]
+        deferred_names = [c["path"] for c in deferred]
+        assert len(kept) + len(deferred) == len(cards), "错开只能暂缓，不能丢卡片"
+        assert deferred_names == ["否定此因"], "同组第二张要暂缓：%r" % deferred_names
+        assert "增长率比较" in kept_names, "不同组的必须留下：%r" % kept_names
 
-    def _heading():
-        chapter = {"text": "第一章 逻辑论证之归因论证", "h": 0.03, "w": 0.5}
-        assert module.heading_level(chapter, 0.02, 1.0) == 1, "章标题应为 1 级"
-        long_body = {"text": "这是一段很长的正文，写了很多字，不应该是标题也不该被当成标题处理", "h": 0.02, "w": 0.9}
-        assert module.heading_level(long_body, 0.02, 1.0) == 0, "长正文不能判成标题"
-
-    check("vision2md 噪声过滤", _noise)
-    check("vision2md 标题判定", _heading)
-
-
-# ---------- 3. CLI 冒烟 ----------
-print("\nCLI 冒烟（都必须报错退出）")
-check("不存在的卡片不能静默改",
-      lambda: run_cli(["pipeline/review.py", "grade", "根本不存在的卡片xyz", "3"]))
-check("非法评分要拒绝", lambda: run_cli(["pipeline/review.py", "grade", "另有他因", "9"]))
-check("不存在的考点不能验证",
-      lambda: run_cli(["pipeline/mistake.py", "verify", "根本不存在的考点xyz", "--kind", "变式", "--result", "对"]))
-check("非法错因要拒绝",
-      lambda: run_cli(["pipeline/mistake.py", "new", "--module", "判断推理", "--stem", "x", "--cause", "瞎写"]))
-check("非法模块要拒绝",
-      lambda: run_cli(["pipeline/split.py", "--module", "判断推理", "--lecture", "X", "/dev/null"]))
-check("缺页面文件要拒绝",
-      lambda: run_cli(["pipeline/split.py", "--module", "行测/判断推理", "--lecture", "X", "/tmp/根本不存在.md"]))
-check("shell 未知参数要拒绝", lambda: run_cli(["tools/kaogong-ocr.sh", "--bogus", "x.jpg"]))
+        # 没有分组信息时，文本相似度兜底
+        twin_a = {"path": "A", "body": "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
+        twin_b = {"path": "B", "body": "②排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性，削弱力度极强。"}
+        kept2, deferred2 = dedup.split_siblings([twin_a, twin_b], lambda c: c["body"])
+        assert [c["path"] for c in deferred2] == ["B"],         "没分组时相似文本也要错开：相似度 %.3f" % dedup.similarity(twin_a["body"], twin_b["body"])
 
 
-# ---------- 汇总 ----------
-print("\n" + "─" * 40)
-if FAILURES:
-    print("  %d/%d 项失败：" % (len(FAILURES), CHECKS[0]))
-    for name, why in FAILURES:
-        print("    ✗ %s — %s" % (name, why))
-    sys.exit(1)
-print("  全部通过：%d 项" % CHECKS[0])
+
+
+    def _dedup_edges():
+        """页码是硬证据；短文本不该拿相似度说事。"""
+        from pipeline import dedup
+
+        # 共用一大段版式文字、但页脚页码不同的两页 —— 相似度中等（0.45-0.85 之间）
+        shared = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事为什么会发生的"
+                  "真正原因所在。做题时先看题干的分组方式，再看选项有没有回到同一组里作比较。")
+        first = "第2页 " + shared + "本页讲对比实验归因，以分组对照实验为载体推导差异产生的原因。"
+        second = "第3页 " + shared + "本页讲时间对比归因，以过去和现在两个时间维度对照状态变化。"
+        score = dedup.similarity(first, second)
+        assert 0.45 <= score < dedup.STRONG_THRESHOLD,         "这条用例要覆盖“页码否决”的那一段，当前相似度 %.3f 不在区间内" % score
+        assert not dedup.is_same_page(first, second),         "页码明确不同且文字只是中等相似（%.3f）时不能判为同一页" % score
+
+        # 页码被 OCR 读错、但文字几乎一致 → 仍应判为同一页
+        long_same = "第2页 " + "①排除他因：剔除其他潜在影响因素，强化题干因果关系的唯一性。" * 3
+        assert dedup.is_same_page(long_same, long_same.replace("第2页", "第！页")),         "页码读错但文字几乎一致，仍应判为同一页"
+
+        short = [{"body": "完全不同的内容 A"}, {"body": "完全不同的内容 B"}]
+        _kept, deferred = dedup.split_siblings(short, lambda c: c["body"])
+        assert not deferred, "太短的正文不该由相似度触发错开"
+
+        assert dedup.page_label("第 12 页") == "12" and dedup.page_label("没有页码") == ""
+
+
+
+
+    def _dedup_rescue():
+        """相似度不高、但页码相同的候选，也要被捞回来。
+
+        起因：旧实现只验“相似度最高的那个候选”，于是重拍糊了（相似度 0.3）
+        但页码对得上的那页会被丢掉，结果同一页被当成新页重新录入。
+        """
+        from pipeline import dedup
+        base = ("归因论证的核心是对已发生的既定事实进行原因探究，文段的最终目的是分析这件事的"
+                "真正原因，做题时要先看题干的分组方式再回到同一组里比较选项。")
+        candidate = "第2页 " + base
+        # 同样的页码，但文字被 OCR 弄花了一部分 → 相似度中等
+        noisy = "第2页 " + "归因论证核心对已发生事实进行原因探究，文段目的是分析真正原因，做题先看分组方式再回到同组比较选项。"
+        score = dedup.similarity(candidate, noisy)
+        assert score < dedup.DEFAULT_THRESHOLD, "这条用例需要相似度低于主阈值，实测 %.3f" % score
+        assert score >= dedup.PAGE_LABEL_THRESHOLD, "又要够到页码旁证阈值，实测 %.3f" % score
+        # 另一个候选分数更高，但它不是同一页（页码不同、文字也不同）
+        decoy = "第7页 " + "四、归因论证常见正误选项判定标准 ①话题紧扣原因：选项始终围绕题干成因展开。"
+        hit = dedup.find_match(candidate, [("诱饵.md", decoy), ("老的.md", noisy)])
+        assert hit and hit[0] == "老的.md", "页码相同的那页应当被捞回来，实际 %r" % (hit,)
+
+
+
+
+    def _split_smoke():
+        """光 import 不够。
+
+        split.py 曾因为一个三元组解包写错而完全跑不起来，
+        而当时的门禁只查语法和导入，照样全绿。所以这里必须真的执行一次。
+        """
+        import subprocess, sys, tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp())
+        page = tmp / "样例-p001.md"
+        page_text = chr(10).join([
+            "---", "source: 样例", "page: 1", "---", "",
+            "### 三种削弱（质疑）方式", "",
+            "①另有他因：引入题干未提及的其他影响因素，降低原有因果关系的确定性。", "",
+            "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。", "",
+        ])
+        page.write_text(page_text, encoding="utf-8")
+        command = [sys.executable, "pipeline/split.py", "--module", "行测/判断推理",
+                   "--lecture", "冒烟", "--source", "冒烟", "--dry", str(page)]
+        result = subprocess.run(command, capture_output=True, text=True, cwd=ROOT, timeout=60)
+        output = (result.stdout or "") + (result.stderr or "")
+        assert result.returncode == 0, "split.py 跑不起来：%s" % output[-400:]
+        assert "卡片" in output, "split.py 没输出卡片数：%s" % output[-200:]
+
+
+    def _review_smoke():
+        """复习链路的只读命令也要真跑（--dry，不推送）。"""
+        import subprocess, sys
+        for args in (["push", "--dry"], ["due"], ["stats"]):
+            result = subprocess.run([sys.executable, "pipeline/review.py"] + args,
+                                    capture_output=True, text=True, cwd=ROOT, timeout=60)
+            assert result.returncode == 0, "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
+
+
+
+
+    def _card_health():
+        """坏卡必须能被认出来。
+
+        背景：state_health / broken_cards 一度是死代码（load() 忘了填 health 字段），
+        于是“字段坏了”的卡照样被当成新卡重新排期，真实复习历史被覆盖。
+        这个用例同时钉住 state_health 与 load() 的字段连线。
+        """
+        import tempfile
+        from pathlib import Path
+        from pipeline import cards, vault
+        good = "---\ntype: 考点\n到期: 2026-09-25\n稳定度: 12\n难度: 5\n复习次数: 1\n上次复习: 2026-09-13\n---\n\n正文\n"
+        broken = "---\ntype: 考点\n到期: 不是日期\n稳定度: abc\n难度: 5\n---\n\n正文\n"
+        fresh = "---\ntype: 考点\n状态: 未掌握\n---\n\n正文\n"
+        tmp = Path(tempfile.mkdtemp())
+        results = {}
+        for name, text in (("好卡", good), ("坏卡", broken), ("新卡", fresh)):
+            target = tmp / (name + ".md")
+            target.write_text(text, encoding="utf-8")
+            front_matter, _body, _raw = vault.read(target)
+            results[name] = cards.state_health(front_matter)
+        assert results["好卡"] == "ok", results
+        assert results["坏卡"] == "broken", "坏卡没被认出来：%r" % results
+        assert results["新卡"] == "none", results
+        # load() 必须真的把 health 带上，否则 broken_cards() 永远是空
+        target = tmp / "坏卡.md"
+        loaded = cards.load(target)
+        assert loaded.get("health") == "broken", "load() 没带 health：%r" % loaded.get("health")
+
+
+    check("卡片健康度", _card_health)
+
+
+    PAGE_QUESTIONS = chr(10).join([
+        "1. 甲伤害乙，乙冠心病发作死亡。甲的行为与死亡结果之间：",
+        "A. 无因果关系    B. 有因果关系",
+        "C. 视情况而定    D. 无法判断",
+        "",
+        "2. 关于介入因素，下列说法正确的是：",
+        "A. 介入因素必然中断因果关系",
+        "B. 介入因素异常且独立引起结果时中断",
+    ])
+    PAGE_HANDOUT = chr(10).join([
+        "第一章 逻辑论证之归因论证",
+        "一、归因论证定义",
+        "归因论证的核心，是对已发生的既定事实进行原因探究。",
+        "（一）三类常规结构通用方法",
+        "本部分内容适用于对比实验归因。",
+    ])
+    PAGE_ANSWERS = chr(10).join([
+        "参考答案与解析",
+        "1. B",
+        "2. D",
+        "3. ABD",
+    ])
+
+
+    def _classify_pages():
+        from pipeline import classify
+        assert classify.classify_page(PAGE_QUESTIONS) == classify.QUESTIONS, "题目页没认出来"
+        assert classify.classify_page(PAGE_HANDOUT) == classify.HANDOUT, "讲义页没认出来"
+        assert classify.classify_page(PAGE_ANSWERS) == classify.ANSWERS, "答案页没认出来"
+        assert classify.classify_page("随便一段话") == classify.UNKNOWN, "乱内容应当判 unknown"
+        # 全角是 OCR 的常态，不能因此漏整页
+        fullwidth = "１． 题干一" + chr(10) + "Ａ． 选项甲" + chr(10) + "２． 题干二" + chr(10) + "Ｂ． 选项乙"
+        assert classify.classify_page(fullwidth) == classify.QUESTIONS, "全角题目页没认出来"
+
+
+    def _split_questions():
+        from pipeline import classify
+        questions = classify.split_questions(PAGE_QUESTIONS)
+        assert len(questions) == 2, "应当切出 2 道题，得到 %d" % len(questions)
+        assert questions[0]["number"] == 1 and questions[1]["number"] == 2
+        # 题干不能丢字：题号模式里多一个 \S 就会把首字吃掉
+        assert questions[0]["stem"].startswith("甲伤害乙"), "题干首字被吃了：%r" % questions[0]["stem"][:6]
+        # 同一行四个选项也要全抽出来
+        assert len(questions[0]["options"]) == 4, "同行选项没抽全：%r" % questions[0]["options"]
+        assert questions[1]["options"][1].startswith("介入因素异常"), questions[1]["options"]
+
+
+    def _answer_key_formats():
+        from pipeline import classify
+        expected = {1: "B", 2: "C", 3: "D", 4: "A", 5: "B"}
+        for text in ("1-5 BCDAB", "1~5 BCDAB", "1—5 BCDAB", "１－５ ＢＣＤＡＢ"):
+            assert classify.parse_answer_key(text) == expected, "%r 解析不对：%s" % (text, classify.parse_answer_key(text))
+        single = classify.parse_answer_key("1. B" + chr(10) + "2．C" + chr(10) + "3、D")
+        assert single == {1: "B", 2: "C", 3: "D"}, single
+        assert classify.parse_answer_key("") == {}, "空文本该返回空表"
+
+
+    def _judge_answers():
+        from pipeline import answers
+        cases = [
+            ("B", "B", answers.RIGHT),
+            ("b", "Ｂ", answers.RIGHT),          # 全角/大小写不算错
+            ("选 B", "B", answers.RIGHT),        # 手写常见噪声
+            ("DBA", "ABD", answers.RIGHT),        # 多选顺序无关
+            ("AB", "ABD", answers.WRONG),         # 少选算错
+            ("B", "D", answers.WRONG),
+            ("√", "正确", answers.RIGHT),         # 判断题
+            ("×", "错误", answers.RIGHT),
+            ("", "B", answers.UNKNOWN),          # 没作答 → 待定，不能猜
+            ("不会", "B", answers.UNKNOWN),
+            ("B", "", answers.UNKNOWN),
+        ]
+        for student, correct, want in cases:
+            got = answers.judge(student, correct)
+            assert got == want, "judge(%r, %r) = %s，应为 %s" % (student, correct, got, want)
+
+
+    check("页面分类", _classify_pages)
+    check("题目切分", _split_questions)
+    check("答案表解析", _answer_key_formats)
+    check("判对错", _judge_answers)
+    check("split 冒烟", _split_smoke)
+    check("复习链路冒烟", _review_smoke)
+    check("去重捞回", _dedup_rescue)
+    check("去重边界", _dedup_edges)
+    check("页面去重", _page_dedup)
+    check("近义错开", _siblings)
+
+    check("vault 边界", _vault_edges)
+    def _domain_errors():
+        from pipeline import cards
+        try:
+            cards.find("根本不存在的卡片xyz")
+        except errors.CardNotFound:
+            pass
+        else:
+            raise AssertionError("找不到卡片要抛 CardNotFound")
+        try:
+            cards.find("支持")
+        except errors.AmbiguousCard:
+            pass
+        else:
+            raise AssertionError("模糊命中多张要抛 AmbiguousCard")
+        try:
+            fsrs.schedule(None, 9)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("非法评分要抛 ValueError")
+
+
+    check("领域异常", _domain_errors)
+    check("Markdown 转义", _md_escape)
+    check("排期边界", _schedule_edges)
+    check("三关闸门", _mastery_gates)
+    check("文件命名", _naming)
+    check("条目续行", _item_continuation)
+
+    if vision2md is None:
+        print("  - vision2md 未加载（跳过页面解析用例）")
+    else:
+        module = vision2md
+
+        def _noise():
+            page_number = {"text": "第2页", "y": 0.95, "h": 0.02}
+            header = {"text": "关注“花生十三”公众号，每日图推、类比、速算等", "y": 0.04, "h": 0.02}
+            brand = {"text": "四海公章", "y": 0.05, "h": 0.02}
+            logo = {"text": "CTHAIGONG KAO", "y": 0.06, "h": 0.02}
+            body = {"text": "①另有他因：引入题干未提及的其他影响因素", "y": 0.5, "h": 0.02}
+            short_body = {"text": "第2条规则", "y": 0.5, "h": 0.02}
+            checks = [
+                (module.is_noise(page_number, set()), "页码要当噪声"),
+                (module.is_noise(header, {header["text"]}), "批内识别出的页眉要当噪声"),
+                (module.is_noise(header, set()), "单页时页眉里的公众号行也要丢"),
+                (module.is_noise(brand, set()), "页眉带里的短品牌名要丢"),
+                (module.is_noise(logo, set()), "商标英文行要丢"),
+                (not module.is_noise(body, set()), "正文不能被当噪声"),
+                (not module.is_noise(short_body, set()), "正文里的“第X条”不能被误删"),
+            ]
+            for ok, why in checks:
+                verdict = bool(ok)
+                assert verdict, why
+
+        def _heading():
+            chapter = {"text": "第一章 逻辑论证之归因论证", "h": 0.03, "w": 0.5}
+            assert module.heading_level(chapter, 0.02, 1.0) == 1, "章标题应为 1 级"
+            long_body = {"text": "这是一段很长的正文，写了很多字，不应该是标题也不该被当成标题处理", "h": 0.02, "w": 0.9}
+            assert module.heading_level(long_body, 0.02, 1.0) == 0, "长正文不能判成标题"
+
+        check("vision2md 噪声过滤", _noise)
+        check("vision2md 标题判定", _heading)
+
+
+    # ---------- 3. CLI 冒烟 ----------
+    print("\nCLI 冒烟（都必须报错退出）")
+    check("不存在的卡片不能静默改",
+          lambda: run_cli(["pipeline/review.py", "grade", "根本不存在的卡片xyz", "3"]))
+    check("非法评分要拒绝", lambda: run_cli(["pipeline/review.py", "grade", "另有他因", "9"]))
+    check("不存在的考点不能验证",
+          lambda: run_cli(["pipeline/mistake.py", "verify", "根本不存在的考点xyz", "--kind", "变式", "--result", "对"]))
+    check("非法错因要拒绝",
+          lambda: run_cli(["pipeline/mistake.py", "new", "--module", "判断推理", "--stem", "x", "--cause", "瞎写"]))
+    check("非法模块要拒绝",
+          lambda: run_cli(["pipeline/split.py", "--module", "判断推理", "--lecture", "X", "/dev/null"]))
+    check("缺页面文件要拒绝",
+          lambda: run_cli(["pipeline/split.py", "--module", "行测/判断推理", "--lecture", "X", "/tmp/根本不存在.md"]))
+    check("shell 未知参数要拒绝", lambda: run_cli(["tools/kaogong-ocr.sh", "--bogus", "x.jpg"]))
+
+
+    # ---------- 汇总 ----------
+    print("\n" + "─" * 40)
+    if FAILURES:
+        print("  %d/%d 项失败：" % (len(FAILURES), CHECKS[0]))
+        for name, why in FAILURES:
+            print("    ✗ %s — %s" % (name, why))
+        sys.exit(1)
+    print("  全部通过：%d 项" % CHECKS[0])
+
+
+if __name__ == "__main__":
+    main()
+

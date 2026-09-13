@@ -4,16 +4,6 @@ import CoreImage
 import AppKit
 
 // 自动找文档四角 + 透视校正。找不到就原样输出（后续 OCR 仍能跑，只是质量差些）。
-import ImageIO
-
-/// 从图片文件读 EXIF 方向；读不到就按 .up。
-func ExifOrientation(of url: URL) -> UInt32 {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-          let raw = properties[kCGImagePropertyOrientation] as? UInt32 else { return 1 }
-    return raw
-}
-
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
     FileHandle.standardError.write(Data("usage: rectify <in.jpg> <out.jpg>\n".utf8))
@@ -29,9 +19,9 @@ guard let image = CIImage(contentsOf: inputURL) else {
     FileHandle.standardError.write(Data("读不到图片：\(arguments[1])\n".utf8))
     exit(2)
 }
-// 手机拍的照片带 EXIF 旋转标记，不告诉 Vision 会把页面当横躺的
-let orientation = CGImagePropertyOrientation(rawValue: ExifOrientation(of: inputURL)) ?? .up
-let handler = VNImageRequestHandler(ciImage: image, orientation: orientation, options: [:])
+// 故意不传 orientation：CIImage(contentsOf:) 已经把 EXIF 方向应用过了，
+// 再传一次就是二次旋转；而且下面拿 extent 算坐标，转两次必然错位。
+let handler = VNImageRequestHandler(ciImage: image, options: [:])
 var detected: VNRectangleObservation?
 
 if #available(macOS 13.0, *) {
@@ -93,10 +83,11 @@ func isConvex(_ box: VNRectangleObservation) -> Bool {
     let points = [box.topLeft, box.topRight, box.bottomRight, box.bottomLeft]
     var signs: [CGFloat] = []
     for index in 0..<points.count {
-        let a = points[index]
-        let b = points[(index + 1) % points.count]
-        let c = points[(index + 2) % points.count]
-        signs.append((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x))
+        let corner = points[index]
+        let nextCorner = points[(index + 1) % points.count]
+        let afterNext = points[(index + 2) % points.count]
+        signs.append((nextCorner.x - corner.x) * (afterNext.y - nextCorner.y)
+                     - (nextCorner.y - corner.y) * (afterNext.x - nextCorner.x))
     }
     return signs.allSatisfy { $0 >= 0 } || signs.allSatisfy { $0 <= 0 }
 }

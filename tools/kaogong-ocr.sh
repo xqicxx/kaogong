@@ -139,7 +139,7 @@ for f in "${ARGS[@]}"; do
   if [ -n "$WITH_MARKS" ]; then
     # 红笔层：把手写批注单独抠出来。印刷体留给 OCR，手写体留给我判
     if "$BIN/deink" "$TMP/$name.jpg" "$TMP/$name-marks.jpg" --red-only >/dev/null 2>&1; then
-      "$BIN/vision-ocr" "$TMP/$name-marks.jpg" > "$TMP/$name-marks.txt" 2>/dev/null || true
+      "$BIN/vision-ocr" "$TMP/$name-marks.jpg" >"$TMP/$name-marks.txt" 2>/dev/null || true
     fi
   fi
 done

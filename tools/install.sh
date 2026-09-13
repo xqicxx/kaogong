@@ -16,23 +16,28 @@ fi
 
 failed=0
 for tool in rectify vision-ocr deink crop; do
-  rm -f "$BIN/$tool" # 失败时别留着旧二进制冒充新版本
-  if swiftc -O "$tool.swift" -o "$BIN/$tool"; then
+  # 先编到临时文件：直接覆盖的话，编译失败会把上一版还能用的二进制一起删掉
+  staged="$BIN/.$tool.new"
+  rm -f "$staged"
+  if swiftc -O "$tool.swift" -o "$staged"; then
     # 编译过 ≠ 能跑：架构不匹配、dylib 缺失、Gatekeeper 拦截都是运行期才暴露。
     # 这几个工具无参时都会打印用法并非零退出，正好当冒烟测试。
     # 注意 set -e：直接跑再来取 $? 会让脚本在工具非零退出时立刻终止，
     # 必须用 || 兜住，才能拿到退出码去判断
     code=0
-    "$BIN/$tool" >/dev/null 2>&1 || code=$?
+    "$staged" >/dev/null 2>&1 || code=$?
     # 只认 1：这几个工具无参时都是「打印用法 + exit 1」。
     # 126/127 是执行不了，134/139 是崩溃/段错误 —— 那些不算冒烟通过。
     if [ "$code" -eq 1 ]; then
+      mv -f "$staged" "$BIN/$tool"      # 冒烟通过了才顶替旧版本（原子替换）
       echo "  ✓ $tool"
     else
+      rm -f "$staged"
       echo "  ✗ $tool 编译成功但运行不对（无参时该 exit 1，实际 $code）" >&2
       failed=$((failed + 1))
     fi
   else
+    rm -f "$staged"
     echo "  ✗ $tool 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2
     failed=$((failed + 1))
   fi
