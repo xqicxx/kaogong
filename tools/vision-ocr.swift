@@ -30,8 +30,11 @@ func exifOrientation(of path: String) -> CGImagePropertyOrientation {
     return orientation
 }
 
-let handler = VNImageRequestHandler(cgImage: source,
-                                     orientation: exifOrientation(of: imagePath), options: [:])
+// 这里故意不传 orientation：上面的图是用 NSImage.cgImage(forProposedRect:) 取的，
+// 那个接口已经把 EXIF 方向烘进像素了；再传一次会二次旋转，
+// 手机横拍（EXIF=6/8）的照片会被读成躺着的。
+// （exifOrientation() 留着，将来改成 CGImageSource 直读时需要它。）
+let handler = VNImageRequestHandler(cgImage: source, options: [:])
 let started = Date()
 do {
     try handler.perform([request])

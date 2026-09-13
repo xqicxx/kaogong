@@ -56,7 +56,7 @@ def parse_pages(paths):
         except OSError as exc:
             print("  跳过 %s（读不到：%s）" % (p, exc), file=sys.stderr)
             continue
-        fm, body = read_front_matter(text)
+        fm, body, _raw = read_front_matter(text)   # vault.split 返回三元组
         try:
             page = int(fm.get("page", 0) or 0)
         except ValueError:

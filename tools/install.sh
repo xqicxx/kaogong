@@ -8,6 +8,11 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")" && pwd -P)" # 认符号链接，也扛得住路径里的空格
 BIN="${1:-$HOME/.pi/bin}"
 mkdir -p "$BIN"
+# 装到源码目录会把原文件删掉、再建一个指向自己的软链（实测会丢 vision2md.py）
+if [ "$(cd "$BIN" && pwd -P)" = "$(pwd -P)" ]; then
+  echo "目标目录就是源码目录 —— 会覆盖源码。换个目标（默认 ~/.pi/bin）" >&2
+  exit 1
+fi
 
 failed=0
 for tool in rectify vision-ocr deink crop; do
@@ -15,11 +20,17 @@ for tool in rectify vision-ocr deink crop; do
   if swiftc -O "$tool.swift" -o "$BIN/$tool"; then
     # 编译过 ≠ 能跑：架构不匹配、dylib 缺失、Gatekeeper 拦截都是运行期才暴露。
     # 这几个工具无参时都会打印用法并非零退出，正好当冒烟测试。
-    if "$BIN/$tool" >/dev/null 2>&1; then
-      echo "  ✗ $tool 编译成功但运行异常（无参时本该非零退出并给用法）" >&2
-      failed=$(( failed + 1 ))
-    else
+    # 注意 set -e：直接跑再来取 $? 会让脚本在工具非零退出时立刻终止，
+    # 必须用 || 兜住，才能拿到退出码去判断
+    code=0
+    "$BIN/$tool" >/dev/null 2>&1 || code=$?
+    # 只认 1：这几个工具无参时都是「打印用法 + exit 1」。
+    # 126/127 是执行不了，134/139 是崩溃/段错误 —— 那些不算冒烟通过。
+    if [ "$code" -eq 1 ]; then
       echo "  ✓ $tool"
+    else
+      echo "  ✗ $tool 编译成功但运行不对（无参时该 exit 1，实际 $code）" >&2
+      failed=$(( failed + 1 ))
     fi
   else
     echo "  ✗ $tool 编译失败（需要 Xcode 命令行工具：xcode-select --install）" >&2

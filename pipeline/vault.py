@@ -100,7 +100,7 @@ def merge_front_matter(raw_fm, updates):
             continue
         k = line.split(":", 1)[0].strip()
         if k in updates:
-            out.append("%s: %s" % (k, updates[k]))
+            out.append("%s: %s" % (k, _render(updates[k])))
             seen.add(k)
             skipping_continuation = True
         else:
@@ -108,8 +108,25 @@ def merge_front_matter(raw_fm, updates):
             skipping_continuation = False
     for k, v in updates.items():
         if k not in seen:
-            out.append("%s: %s" % (k, v))
+            out.append("%s: %s" % (k, _render(v)))
     return "\n".join(out)
+
+
+def _render(value):
+    """把值渲染成能安全写进 front-matter 的形式。
+
+    放在这个唯一出口上，调用方就不必各自记得加引号 —— 之前正是
+    “有的地方记得、有的地方忘了”，才写出过把解析切坏的文件。
+    已经结构化的值（列表、已加引号的字符串）原样放行。
+    """
+    text = str(value)
+    stripped = text.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return text
+    first = stripped[:1]
+    if len(stripped) >= 2 and first == stripped[-1:] and first in (chr(34), chr(39)):
+        return text
+    return yaml_value(text)
 
 
 def write(path, updates, body, raw_fm):
@@ -145,6 +162,8 @@ def yaml_value(value):
     """
     text = str(value)
     quote = chr(34)
+    if len(text) >= 2 and text[0] == quote and text[-1] == quote:
+        return text                      # 已经引过就不再套一层
     escape = chr(92) + quote
     needs = (text == "" or text != text.strip()
              or ":" in text or "#" in text or quote in text

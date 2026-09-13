@@ -64,18 +64,24 @@ BODY = """## 题干
 
 
 def find_mistake(name):
-    """按名字找错题；模糊命中多张就报错，绝不自己挑一张。"""
-    if not MISTAKE_DIR.exists():
-        raise CardNotFound("错题目录还不存在：%s" % MISTAKE_DIR)
-    exact = sorted(MISTAKE_DIR.glob("%s.md" % name))
+    """按名字找错题。
+
+    错题文件名是「日期-模块-题干摘要.md」，所以按题干关键词找时必须用 *名字*，
+    只匹配「名字.md」或「名字*.md」永远找不到。
+    glob 会把名字里的 * ? [ ] 当通配符，所以先转义。
+    """
+    if not paths.MISTAKE_DIR.exists():
+        raise CardNotFound("错题目录还不存在：%s" % paths.MISTAKE_DIR)
+    safe = name.replace("[", "[[]").replace("?", "[?]").replace("*", "[*]")
+    exact = sorted(paths.MISTAKE_DIR.glob("*-%s.md" % safe))
     if len(exact) == 1:
         return exact[0]
-    fuzzy = sorted(MISTAKE_DIR.glob("%s*.md" % name))
+    fuzzy = sorted(paths.MISTAKE_DIR.glob("*%s*.md" % safe))
     if not fuzzy:
         raise CardNotFound("没找到错题：%s" % name)
     if len(fuzzy) > 1:
         raise AmbiguousCard("「%s」匹配到 %d 道错题：%s"
-                                   % (name, len(fuzzy), "、".join(p.stem for p in fuzzy[:5])))
+                            % (name, len(fuzzy), "、".join(p.stem for p in fuzzy[:5])))
     return fuzzy[0]
 
 
@@ -88,8 +94,13 @@ def cmd_new(args):
     slug = slug[:28].strip("-") or "错题"
     MISTAKE_DIR.mkdir(parents=True, exist_ok=True)
     target = MISTAKE_DIR / ("%s-%s-%s.md" % (date.today(), args.module.replace("/", "-"), slug))
+    counter = 2
+    base_target = target
+    while target.exists() and counter <= 20:
+        target = base_target.with_name("%s-%d%s" % (base_target.stem, counter, base_target.suffix))
+        counter += 1
     if target.exists():
-        raise KaogongError("已存在：%s" % target)
+        raise KaogongError("同名错题太多了（%s…），换个更具体的题干摘要" % base_target.name)
     points = [p.strip() for p in (args.points or "").split(",") if p.strip()]
     front_matter = {
         "type": "错题",
@@ -104,8 +115,12 @@ def cmd_new(args):
         "错因": args.cause,
         "状态": "待巩固",
     }
-    body = BODY.format(stem=args.stem, cause=args.cause, advice=CAUSES[args.cause],
-                       lecture=("[[%s]]" % args.lecture) if args.lecture else "")
+    # 用 replace 而不是 str.format：题干里出现 {x|x>0} 这类花括号时 format 会抛 KeyError
+    body = BODY
+    for token, value in (("{stem}", args.stem), ("{cause}", args.cause),
+                         ("{advice}", CAUSES[args.cause]),
+                         ("{lecture}", ("[[%s]]" % args.lecture) if args.lecture else "")):
+        body = body.replace(token, value)
     # 走 vault.write：原子写 + 写前快照，不要裸 write_text
     write(target, front_matter, body, "")
     print("  新建 %s" % target.relative_to(VAULT_ROOT))

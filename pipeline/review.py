@@ -20,7 +20,8 @@ import sys
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pipeline.cards import all_cards, by_index, find, save_state, state_fields  # type: ignore[import]  # noqa: E402
+from pipeline.cards import (all_cards, broken_cards, by_index, find,
+                            save_state, state_fields)  # type: ignore[import]  # noqa: E402
 from pipeline.dedup import split_siblings  # type: ignore[import]  # noqa: E402
 from pipeline.errors import KaogongError  # type: ignore[import]  # noqa: E402
 from pipeline.fsrs import FIRST_INTERVAL_DAYS, r_of, schedule  # type: ignore[import]  # noqa: E402
@@ -113,9 +114,10 @@ def build_message(limit, today=None):
 
 def cmd_init(_args):
     count = 0
+    damaged = broken_cards()
     for card in all_cards():
-        if card["state"]:
-            continue
+        if card["state"] or card.get("health") == "broken":
+            continue     # 坏卡不重排：当成新卡会把真实复习历史冲掉
         planned = schedule(None, 3)          # 新卡按“对”起步，首轮到 FIRST_INTERVAL_DAYS
         save_state(card, dict(planned, reps=0, last=None))
         count += 1

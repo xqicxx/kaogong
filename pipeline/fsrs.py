@@ -33,7 +33,9 @@ DEFAULT_REQUEST_RETENTION = 0.9
 # 2026-12-05 考试、83 天窗口 → 首轮 ≈ 12 天。改这一个数就能重锚。
 FIRST_INTERVAL_DAYS = 12.0
 W_ANCHORED = list(W)
-W_ANCHORED[0:3] = [v * FIRST_INTERVAL_DAYS / W[2] for v in W[0:3]]
+# 四个首评档位都要等比缩到同一个基准，只缩前三个会让 Easy 保持原值：
+# Good 被锚到 12 天，Easy 还是 13.8 天 —— 两者几乎没差别，Easy 就没有意义了
+W_ANCHORED[0:4] = [v * FIRST_INTERVAL_DAYS / W[2] for v in W[0:4]]
 
 # 卡片 front-matter 里存状态用的字段名
 KEYS = {"due": "到期", "s": "稳定度", "d": "难度",
@@ -62,7 +64,9 @@ def schedule(state, grade, today=None):
     if grade not in (1, 2, 3, 4):
         raise ValueError("评分只能是 1-4，收到 %r" % (grade,))
     today = today or date.today()
-    if state is None:
+    # last 为空也按新卡处理：否则 elapsed=0 → R=1 → 稳定度一点都不涨，
+    # 白白浪费掉第一个 12 天周期（init 出来的卡就是这种“有状态但没复习过”的形态）
+    if state is None or not state.get("last"):
         stability = W_ANCHORED[grade - 1]
         difficulty = min(max(W[4] - (grade - 3) * W[5], 1), 10)
         reps = 1

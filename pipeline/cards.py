@@ -66,6 +66,11 @@ def all_cards():
     return [load(p) for p in sorted(CARD_DIR.glob("*.md"))]
 
 
+def broken_cards():
+    """排期字段在但读不出来的卡片 —— 不能当新卡处理。"""
+    return [card for card in all_cards() if card.get("health") == "broken"]
+
+
 def find(name, allow_partial=True):
     """按名字找卡：精确优先；模糊命中多张就报错，绝不自己挑一张。"""
 

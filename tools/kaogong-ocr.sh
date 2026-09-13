@@ -92,6 +92,10 @@ trap 'if [ -z "$KEEP_TMP" ] && [ -n "$TMP" ]; then rm -rf "$TMP"; fi' EXIT
 [ -n "$KEEP_TMP" ] && echo "  临时目录保留在：$TMP"
 
 JSONS=()
+# --source 会变成文件名/路径片段，先清掉分隔符与控制字符
+SOURCE_SAFE=$(printf %s "$SOURCE" | tr -d "\000-\037" | tr "/:" "--")
+[ -n "$SOURCE_SAFE" ] || SOURCE_SAFE="未命名讲义"
+
 FAILED=0
 t_rect=0
 t_ocr=0
@@ -135,7 +139,10 @@ fi
 
 echo "  源: $SOURCE   模块: $MODULE   成功 ${#JSONS[@]} 张"
 echo "  矫正 ${t_rect}ms  OCR ${t_ocr}ms"
-python3 "$BIN/vision2md.py" --source "$SOURCE" --out-dir "$OUT" --start-page "$START" $DEDUP "${JSONS[@]}"
+if ! python3 "$BIN/vision2md.py" --source "$SOURCE_SAFE" --out-dir "$OUT" --start-page "$START" $DEDUP "${JSONS[@]}"; then
+  echo "  ✗ 版面转换失败（vision2md），产物可能不完整" >&2
+  exit 6
+fi
 echo "  机器产出 → $OUT   （proofread: false；校对后写到 $VAULT/$MODULE/）"
 # 有页面失败时不要报成功：调用方（脚本/agent）要能感知到
 if [ "$FAILED" -gt 0 ]; then

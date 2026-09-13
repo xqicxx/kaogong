@@ -243,6 +243,44 @@ def _dedup_rescue():
     assert hit and hit[0] == "老的.md", "页码相同的那页应当被捞回来，实际 %r" % (hit,)
 
 
+
+
+def _split_smoke():
+    """光 import 不够。
+
+    split.py 曾因为一个三元组解包写错而完全跑不起来，
+    而当时的门禁只查语法和导入，照样全绿。所以这里必须真的执行一次。
+    """
+    import subprocess, sys, tempfile
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp())
+    page = tmp / "样例-p001.md"
+    page_text = chr(10).join([
+        "---", "source: 样例", "page: 1", "---", "",
+        "### 三种削弱（质疑）方式", "",
+        "①另有他因：引入题干未提及的其他影响因素，降低原有因果关系的确定性。", "",
+        "②因果倒置：颠倒原因与结果的先后顺序，直接否定题干因果关系，削弱力度极强。", "",
+    ])
+    page.write_text(page_text, encoding="utf-8")
+    command = [sys.executable, "pipeline/split.py", "--module", "行测/判断推理",
+               "--lecture", "冒烟", "--source", "冒烟", "--dry", str(page)]
+    result = subprocess.run(command, capture_output=True, text=True, cwd=ROOT, timeout=60)
+    output = (result.stdout or "") + (result.stderr or "")
+    assert result.returncode == 0, "split.py 跑不起来：%s" % output[-400:]
+    assert "卡片" in output, "split.py 没输出卡片数：%s" % output[-200:]
+
+
+def _review_smoke():
+    """复习链路的只读命令也要真跑（--dry，不推送）。"""
+    import subprocess, sys
+    for args in (["push", "--dry"], ["due"], ["stats"]):
+        result = subprocess.run([sys.executable, "pipeline/review.py"] + args,
+                                capture_output=True, text=True, cwd=ROOT, timeout=60)
+        assert result.returncode == 0, "review.py %s 失败：%s" % (args, (result.stderr or "")[-300:])
+
+
+check("split 冒烟", _split_smoke)
+check("复习链路冒烟", _review_smoke)
 check("去重捞回", _dedup_rescue)
 check("去重边界", _dedup_edges)
 check("页面去重", _page_dedup)
