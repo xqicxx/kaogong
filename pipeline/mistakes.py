@@ -14,7 +14,9 @@ from pipeline.paths import MISTAKE_DIR  # type: ignore[import]
 from pipeline.vault import read  # type: ignore[import]
 
 # 记录里出现的键。多加一个字段就改这里，两边同时生效。
-FIELDS = ("题型", "标题", "来源", "状态", "错因", "答题信心",
+# 直接从 front-matter 抄过来的键。
+# 题型 不在其中：它是从「模块」推出来的，不是原名；标题 也不在：它就是文件名。
+FIELDS = ("来源", "状态", "错因", "答题信心",
           "我的答案", "正确答案", "变式连胜", "迁移通过", "复习次数")
 
 
@@ -47,8 +49,7 @@ def read_all():
         item["标题"] = path.stem
         item["题型"] = str(fm.get("模块") or "").strip() or "未分模块"
         for key in FIELDS:
-            if key not in ("题型", "标题"):
-                item[key] = fm.get(key)
+            item[key] = fm.get(key)
         out.append(item)
     return out, skipped
 

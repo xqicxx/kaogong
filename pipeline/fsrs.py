@@ -20,6 +20,8 @@
 import math
 from datetime import date, timedelta
 
+from pipeline.errors import KaogongError  # type: ignore[import]
+
 # FSRS-4.5 默认参数（w0..w16）
 W = [
     0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.031,
@@ -79,7 +81,10 @@ def clamp_stability(value):
 def schedule(state, grade, today=None):
     """评分后的新状态。state 为 None 表示新卡；grade: 1 忘了 / 2 勉强 / 3 对了 / 4 太简单。"""
     if grade not in (1, 2, 3, 4):
-        raise ValueError("评分只能是 1-4，收到 %r" % (grade,))
+        # 抛领域异常而不是 ValueError：本项目的约定是库函数抛 KaogongError，
+        # 只有 main() 把它翻成退出码 —— 抛 ValueError 的话 CLI 的 except 抓不到，
+        # 用户拿到的是 traceback（CLI 层虽然用 choices 拦住了，但库不该指望调用方兜底）
+        raise KaogongError("评分只能是 1-4，收到 %r" % (grade,))
     today = today or date.today()
     # last 为空也按新卡处理：否则 elapsed=0 → R=1 → 稳定度一点都不涨，
     # 白白浪费掉第一个 12 天周期（init 出来的卡就是这种“有状态但没复习过”的形态）

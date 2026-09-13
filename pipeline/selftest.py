@@ -147,11 +147,24 @@ def main():
     def _mastery_gates():
         today = date(2026, 9, 13)
         for kind in ("迁移", "保持"):
-            expect_raises(ValueError,
+            # 必须是领域异常：以前抛 ValueError，CLI 的 except KaogongError 抓不到，
+            # 用户看到的是 traceback 而不是一句人话
+            expect_raises(errors.InvalidState,
                           lambda k=kind: mistake.advance({"状态": "未掌握"}, k, True, today),
                           "未掌握不能直接考 %s 关" % kind)
+        # 领域层不许把 ValueError 漏出去
+        for bad in (lambda: mistake.advance({"状态": "未掌握"}, "瞎写的关", True, today),
+                    lambda: fsrs.schedule(None, 9)):
+            try:
+                bad()
+                raise AssertionError("本该报错")
+            except errors.KaogongError:
+                pass
+            except Exception as exc:
+                raise AssertionError("领域层漏了 %s，CLI 抓不到，用户会看到 traceback"
+                                     % type(exc).__name__)
         state = mistake.advance({"状态": "未掌握"}, "变式", True, today)
-        expect_raises(ValueError, lambda: mistake.advance(state, "迁移", True, today),
+        expect_raises(errors.InvalidState, lambda: mistake.advance(state, "迁移", True, today),
                       "变式只赢 1 次不能考迁移关")
         state = mistake.advance(state, "变式", True, today)
         assert state["状态"] == "迁移中", state
@@ -477,10 +490,10 @@ def main():
             raise AssertionError("模糊命中多张要抛 AmbiguousCard")
         try:
             fsrs.schedule(None, 9)
-        except ValueError:
+        except errors.KaogongError:
             pass
         else:
-            raise AssertionError("非法评分要抛 ValueError")
+            raise AssertionError("非法评分要抛 KaogongError（不是 ValueError —— CLI 抓不到它）")
 
 
     check("领域异常", _domain_errors)

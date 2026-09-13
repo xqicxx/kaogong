@@ -14,8 +14,9 @@ def _path(env_name, default):
     raw = os.environ.get(env_name)
     if not raw:
         return default
-    candidate = Path(raw).expanduser()
-    return candidate.resolve() if candidate.is_absolute() or not candidate.exists() else candidate.resolve()
+    # 两个分支原来写成同一个表达式（`candidate.resolve()`），条件毫无作用 ——
+    # 相对路径也要绝对化，否则会随 cwd 漂移；直接 resolve 就够了。
+    return Path(raw).expanduser().resolve()
 
 
 # 笔记库（考公子目录）；KAOGONG_VAULT 可覆盖

@@ -142,10 +142,10 @@ def _render(value):
     first = stripped[:1]
     if len(stripped) >= 2 and first == stripped[-1:] and first in (chr(34), chr(39)):
         return text
-    if "\n" in text or "\r" in text:
-        # 换行必须引起来并被 yaml_value 转义：否则值会被写成一堆“幽灵键”，
-        # 把 front-matter 从中间切碎（下一次读就多出一堆不存在的字段）
-        return yaml_value(text)
+    # 换行交给 yaml_value 处理（它会把换行压成空格再加引号）—— 值必须单行，
+    # 否则会被写成一堆“幽灵键”，把 front-matter 从中间切碎，
+    # 下一次读就多出一堆不存在的字段。原来这里写了个 if，但两个分支返回同一个
+    # 表达式，等于没有分支 —— 删掉，别让人以为换行有单独的处理路径。
     return yaml_value(text)
 
 
@@ -231,8 +231,8 @@ def selftest():
     ok7 = fm3 == {}
     assert ok7, "缺闭合分隔符时应当作没有 front-matter"
     _, _, raw4 = split("---\na: 1\nb: |\n  ---foo\n---\n\n正文")
-    ok8 = body3 is not None and "---foo" in raw4
-    assert ok8, "正文里的 ---foo 不能被当结束符"
+    ok8 = "---foo" in raw4
+    assert ok8, "front-matter 里的 ---foo 不能被当结束符"
     r1 = merge_front_matter("\ntype: 考点\n状态: 未掌握", {"状态": "已掌握"})
     r2 = merge_front_matter(r1, {"状态": "未掌握"})
     n1, n2 = len(r1.splitlines()), len(r2.splitlines())
@@ -252,7 +252,7 @@ def selftest():
     ok13 = yaml_value("普通值") == "普通值" and yaml_value("第 3 题：另有他因").startswith("第")
     assert ok13, "普通值不该加引号"
     assert ok11, "raw_fm 为 None 也不能崩"
-    print("  自检通过：11 项（原子写 / 精确分隔符 / 缺头不崩 / 往返不膨胀 / 多行值清残行）")
+    print("  自检通过：13 项（原子写 / 精确分隔符 / 缺头不崩 / 往返不膨胀 / 多行值清残行）")
 
 
 if __name__ == "__main__":

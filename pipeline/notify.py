@@ -6,6 +6,7 @@
 """
 import json
 import urllib.request
+from urllib.error import HTTPError
 
 import os
 import sys
@@ -46,6 +47,16 @@ def send(text):
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = response.read().decode("utf-8", "replace")
             status = response.status
+    except HTTPError as exc:
+        # HTTPError 自己带着 Telegram 的说明（「can't parse entities: ...」），
+        # 不读出来就只剩「HTTP Error 400: Bad Request」—— 那条信息等于没说，
+        # 而这正是最常发生的一类失败（卡片名里的 _ * [ ] 会把 Markdown 解析搞崩）
+        detail = ""
+        try:
+            detail = json.loads(exc.read().decode("utf-8", "replace")).get("description") or ""
+        except (OSError, ValueError):
+            detail = ""
+        raise DeliveryError("Telegram 拒收（HTTP %s）：%s" % (exc.code, detail or exc.reason))
     except OSError as exc:
         raise DeliveryError("发送失败：%s" % exc)
     # HTTP 200 也可能是 ok:false（Markdown 解析失败、被限流…），必须查这个字段，

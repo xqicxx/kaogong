@@ -117,11 +117,9 @@ def cmd_verify(args):
     card = find(args.card)
     stability = safe_float(card["fm"].get("稳定度"), 12.0)
     before = normalize(card["fm"].get("状态"))
-    try:
-        after = advance(from_card(card["fm"]), args.kind,
-                                args.result == "对", stability=stability)
-    except ValueError as exc:
-        raise InvalidState(str(exc))
+    # advance() 现在自己就抛 InvalidState（领域异常），这里不用再包一层
+    after = advance(from_card(card["fm"]), args.kind,
+                    args.result == "对", stability=stability)
     write(card["path"], to_card(after), card["body"], card["raw"])
     arrow = "→" if after["状态"] != before else "（不变）"
     print("  %s  %s %s %s  %s" % (card["path"].stem, args.kind, args.result, arrow, after["状态"]))
@@ -371,14 +369,14 @@ def cmd_selftest(_args):
     for kind in ("迁移", "保持"):
         try:
             advance({"状态": "未掌握"}, kind, True, today)
-        except ValueError:
+        except InvalidState:
             continue
         raise AssertionError("未掌握竟然能直接过 %s 关" % kind)
     state = advance({"状态": "未掌握"}, "变式", True, today)
     assert state["状态"] == "变式中" and state["变式连胜"] == 1, state
     try:
         advance(state, "迁移", True, today)
-    except ValueError:
+    except InvalidState:
         pass
     else:
         raise AssertionError("变式只赢 1 次不该能考迁移关")

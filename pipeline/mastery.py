@@ -13,7 +13,7 @@
 """
 from datetime import date, timedelta
 
-from pipeline.errors import KaogongError  # type: ignore[import]
+from pipeline.errors import InvalidState, KaogongError  # type: ignore[import]
 
 STEPS = ["未掌握", "变式中", "迁移中", "待保持", "已掌握"]
 GATE = {
@@ -93,15 +93,18 @@ def to_card(state):
 def advance(state, kind, passed, today=None, stability=12.0):
     """过一关。kind: 变式/迁移/保持；passed: 对/错。
 
-    非法转换抛 ValueError（由 CLI 层翻成退出码）。
+    非法转换抛 InvalidState（领域异常）。
+    ⚠️ 以前这里抛 ValueError —— 那违反本项目的约定「库函数抛 KaogongError，
+    只有 main() 把它翻成退出码」：CLI 层的 except 抓不到 ValueError，
+    用户看到的是 traceback 而不是一句人话。InvalidState 本来就是为这件事定义的。
     """
     if kind not in GATE:
-        raise ValueError("kind 只能是 变式/迁移/保持，收到 %r" % (kind,))
+        raise InvalidState("kind 只能是 变式/迁移/保持，收到 %r" % (kind,))
     today = today or date.today()
     current = normalize(state.get("状态"))
     if current not in GATE[kind]:
-        raise ValueError("%s 关要求当前状态是 %s，但这张卡是「%s」—— 得先过前面的关"
-                         % (kind, "/".join(GATE[kind]), current))
+        raise InvalidState("%s 关要求当前状态是 %s，但这张卡是「%s」—— 得先过前面的关"
+                           % (kind, "/".join(GATE[kind]), current))
 
     result = {
         "状态": current,
